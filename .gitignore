@@ -1,0 +1,22 @@
+# Build output
+target/
+out/
+build/
+*.class
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+
+# Not published yet
+/Vending Machine/
+/.github/
