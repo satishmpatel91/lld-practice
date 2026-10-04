@@ -10,6 +10,20 @@ public class VendingMachine {
     private Slot selectedSlot;
     private int amountInserted;
 
+    private MachineState state() {
+        if (selectedSlot == null) {
+            return MachineState.IDLE;
+        } else {
+            return MachineState.ITEM_SELECTED;
+        }
+    }
+
+    private void requireState(MachineState expected, String message) {
+        if (state() != expected) {
+            throw new IllegalStateException(message);
+        }
+    }
+
     public List<ItemView> showItems() {
         return inventory.allSlots().stream()
                 .map(ItemView::fromSlot)
@@ -17,9 +31,7 @@ public class VendingMachine {
     }
 
     public void selectItem(String code) {
-        if (selectedSlot != null) {
-            throw new IllegalStateException("An item is already selected.");
-        }
+        requireState(MachineState.IDLE, "An item is already selected.");
         Slot slot = inventory.getSlot(code);
         if (slot.isEmpty()) {
             throw new IllegalStateException("Item is sold out.");
@@ -28,9 +40,7 @@ public class VendingMachine {
     }
 
     public void insertMoney(int amount) {
-        if (selectedSlot == null) {
-            throw new IllegalStateException("No item selected.");
-        }
+        requireState(MachineState.ITEM_SELECTED, "No item selected.");
         if (amount <= 0) {
             throw new IllegalArgumentException("Amount to insert must be positive.");
         }
@@ -38,9 +48,7 @@ public class VendingMachine {
     }
 
     public DispenseResult dispense() {
-        if (selectedSlot == null) {
-            throw new IllegalStateException("No item selected.");
-        }
+        requireState(MachineState.ITEM_SELECTED, "No item selected.");
         Item item = selectedSlot.getItem();
         if (amountInserted < item.getPrice()) {
             throw new IllegalStateException("Insufficient funds. Please insert more money.");
@@ -53,7 +61,7 @@ public class VendingMachine {
     }
 
     public int cancel() {
-        if (selectedSlot == null) {
+        if (state() == MachineState.IDLE) {
             return 0;
         }
         int refund = amountInserted;
