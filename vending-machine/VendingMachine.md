@@ -561,3 +561,224 @@ inserted — that payload still lives in `VendingMachine`, so state and its data
 remain apart. This is the limitation V2c removes.
 
 ---
+
+## V2c — State objects (the State pattern)
+
+### Problem
+
+V2b's table said what was *legal*; every method still contained the behaviour
+for every state. Four limitations remained:
+
+- a new operation with no `requireOperation` line ran unguarded — the table was
+  consulted by convention, not by structure
+- nothing tied the constant `SELECT_ITEM` to the method `selectItem()`, so
+  passing the wrong constant compiled and silently disabled the guard
+- `OUT_OF_SERVICE` would mean a new constant *and* an edit to every method that
+  must behave differently there
+- **a state could not carry its own data.** `ITEM_SELECTED` was a label with a
+  permission set; *which* slot and *how much* money still lived in
+  `VendingMachine`, so a state and its data stayed apart
+
+### The insight that unlocks it
+
+An enum constant is a singleton — one `ITEM_SELECTED` for the whole JVM. A state
+*object* can be instantiated per transition, so it can hold the payload of that
+transition.
+
+This also resolves V2a's rule. V2a insisted state be **derived**, because a
+stored `state` field plus `selectedSlot` were two sources of truth for one fact.
+Once the state object *is* where the payload lives, there is nothing to keep in
+sync, so storing it is correct:
+
+> Deriving was right while the data lived elsewhere. Once the state owns its
+> data, storing it is right.
+
+### Solution
+
+`interface State` with every operation a `default` method that throws. A state
+permits exactly what it overrides, so **deny-by-default** replaces the guard
+convention — a forgotten guard is no longer unlikely, it is unrepresentable.
+And because the compiler ties a method name to its operation, V2b's
+wrong-constant bug cannot be written.
+
+`IdleState` holds nothing. `ItemSelectedState` holds `Slot` and
+`int amountInserted`, both final.
+
+**States are immutable.** `insertMoney` returns
+`new ItemSelectedState(slot, amountInserted + amount)` rather than mutating. Two
+payoffs: a fresh transaction is a fresh object, so money leaking between
+purchases is not a bug to avoid but a state that cannot be expressed; and a
+transition becomes a **single reference swap**, which is what makes V4's atomic
+compare-and-set possible. A mutable state would have to be locked while it
+changes; an immutable one never changes.
+
+**How a transition happens** — `record Transition<T>(State next, T payload)`.
+Three options were considered:
+
+| | Mechanism | Cost |
+|---|---|---|
+| context callback (GoF) | state holds the machine, calls `setState(...)` | a state can call *any* public method on the machine; transitions become reentrant and hard to trace |
+| return the next state | `state = state.dispense()` | no way to also return `DispenseResult` to the caller |
+| **return both** | `Transition(next, payload)` | `Transition<Void>` for operations with nothing to return |
+
+Returning both keeps states unable to do anything except *describe* what the
+machine should become. Read it **once** and use both halves — calling the
+operation twice to fetch `next()` and then `payload()` executes it twice.
+
+**How a state reaches the `Inventory`** — passed as a method parameter, for now.
+A field on each state would make every transition thread collaborators into the
+next constructor; a `MachineContext` record would stop signatures churning but
+today would wrap a single field, the same unearned indirection that deleted
+`Payment` in V1 and rejected `TransitionRules` in V2b. The parameter stays until
+V3 adds a payment processor and the churn is real.
+
+**`showItems` is not on `State`.** It is legal in every state and identical in
+all of them, so putting it there adds a dispatch that always lands in the same
+place — in V2b it was an entry in every set, which is what decorative data looks
+like. It stays on `VendingMachine`.
+
+### Class diagram
+
+```mermaid
+classDiagram
+    class VendingMachine {
+        -Inventory inventory
+        -State state
+        +showItems() List~ItemView~
+        +selectItem(String code) void
+        +insertMoney(int amount) void
+        +dispense() DispenseResult
+        +cancel() int
+    }
+
+    class State {
+        <<interface>>
+        +deniedMessage() String
+        +selectItem(String code, Inventory inventory) Transition~Void~
+        +insertMoney(int amount) Transition~Void~
+        +dispense() Transition~DispenseResult~
+        +cancel() Transition~Integer~
+    }
+
+    class IdleState {
+        +deniedMessage() String
+        +selectItem(String code, Inventory inventory) Transition~Void~
+        +cancel() Transition~Integer~
+    }
+
+    class ItemSelectedState {
+        -Slot slot
+        -int amountInserted
+        +deniedMessage() String
+        +insertMoney(int amount) Transition~Void~
+        +dispense() Transition~DispenseResult~
+        +cancel() Transition~Integer~
+    }
+
+    class Transition~T~ {
+        <<record>>
+        +State next
+        +T payload
+        +to(State next) Transition~Void~
+    }
+
+    State <|.. IdleState : implements
+    State <|.. ItemSelectedState : implements
+    VendingMachine o-- State : current
+    VendingMachine ..> Transition : reads
+    State ..> Transition : returns
+    ItemSelectedState --> Slot : payload
+```
+
+`VendingMachine o-- State` is an **aggregation**: the machine holds a state but
+states are swapped, not owned for life. `ItemSelectedState --> Slot` is the
+payload that used to sit on `VendingMachine`.
+
+### Flow
+
+```
+state = IdleState
+selectItem("A1")   -> IdleState.selectItem: lookup, not empty       <- data condition
+                   -> Transition.to(new ItemSelectedState(A1, 0))
+                   -> state = ItemSelectedState(A1, 0)
+insertMoney(10)    -> new ItemSelectedState(A1, 10)                  (old instance discarded)
+insertMoney(20)    -> new ItemSelectedState(A1, 30)
+dispense()         -> 30 >= 25 ok                                    <- data condition
+                   -> stock--, Transition(new IdleState(), result(Coke, 5))
+                   -> state = IdleState, caller gets the result
+dispense()         -> IdleState does not override dispense
+                   -> State.dispense() default throws "No item selected."
+```
+
+The last line is the pattern working: no guard was written anywhere, and the
+interface default refused the operation.
+
+### Two bugs this version shipped
+
+**Every operation ran twice.** `state = state.dispense().next();` followed by
+`return state.dispense().payload();` calls the operation a second time, on the
+*new* state. A successful purchase decremented stock, built the result, threw the
+result away and then threw an exception — money gone, item gone, error returned.
+`cancel()` failed differently: `IdleState` returned a `null` payload, so
+unboxing to `int` threw NPE. A `Transition` is one value describing one
+transition; fetch it once.
+
+**`IdleState.cancel()` returned a `null` payload.** Cancelling an idle machine
+refunds **zero**, not *nothing*. `Transition.to(...)` is for operations with
+genuinely nothing to return; `cancel` always has a number.
+
+17 of 36 tests caught both. `Main` would have printed its way past the second.
+
+### Deleting the old design
+
+`MachineState`, `Operation`, the V2a/V2b `VendingMachine` and `MachineStateTest`
+are gone. Until that deletion, V2c was dead code — `Main` and the tests still
+used the old class.
+
+Those 7 deleted tests asserted *an implementation*: a table that no longer
+exists. The behaviour they protected ("you cannot insert money before
+selecting") is still asserted in `VendingMachineTest`, through the public API —
+which is why that suite survived a total rewrite of the state machine untouched.
+Testing a contract outlives the design; testing a design dies with it.
+
+What was genuinely lost: `MachineStateTest` could assert "every operation is
+permitted by at least one state". In V2c there is no single place that question
+can even be asked.
+
+### Design trade-off, stated honestly
+
+V2c did not strictly beat V2b — it traded one weakness for another.
+
+| Question | V2b (table) | V2c (objects) |
+|---|---|---|
+| What is legal in `ITEM_SELECTED`? | one line on the enum | one file, the overrides are the answer |
+| Which states allow `CANCEL`? | one line | open every state class |
+| Draw the full transition graph | read the table | read all N states; nothing lists them |
+| Can a state carry data? | **no** | yes |
+| Can a guard be forgotten? | yes | no |
+
+> The enum table makes the **rules** explicit and the **behaviour** centralised.
+> State objects make the **behaviour** cohesive and the **rules** implicit.
+
+Pick on which question you ask more often — and on whether states must carry
+data. Here the payload settles it: `ItemSelectedState` owning the slot and the
+amount is what made money-leaking unrepresentable rather than merely tested for.
+
+### Problems with V2c
+
+**Shared behaviour will duplicate.** `cancel` already exists in both states and
+will exist in nearly all future ones. More states means an abstract base class
+or repeated code.
+
+**The state graph is diffuse.** No file lists the states or the transitions
+between them; both are emergent from N classes.
+
+**Class count grows per state.** Two states, two files - fine. Six states is six
+files plus a base class, for a machine whose rules fit in a small table.
+
+**The collaborator parameter will churn.** `selectItem(String, Inventory)` works
+with one collaborator. V3 adds a payment processor and V5 a coin float, and
+every signature on the interface changes with each addition - the pressure that
+makes `MachineContext` worth introducing *then*.
+
+---
