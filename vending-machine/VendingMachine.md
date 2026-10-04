@@ -782,3 +782,306 @@ every signature on the interface changes with each addition - the pressure that
 makes `MachineContext` worth introducing *then*.
 
 ---
+
+## V3 — Card payments (Strategy)
+
+### New requirement
+
+The machine accepts cards as well as cash. This sounds like "add a method" and
+is not: it breaks an assumption carried since V1.
+
+With cash, by the time `dispense()` runs the payment has already *physically*
+happened - the coins are inside the machine. `amountInserted` is not a promise,
+it is a fact, so `dispense()` was a local operation over local data.
+
+A card charge is **a call to someone else**:
+
+| | Cash | Card |
+|---|---|---|
+| Interactions | many `insertMoney` calls | one authorization |
+| Can it fail? | no | yes - declined, network, timeout |
+| Duration | instant | hundreds of ms, or hangs |
+| Overpayment | normal, needs change | impossible - charge the exact price |
+| Outcome always known? | yes | **no** - a timeout means you do not know |
+
+So dispensing becomes **two steps that can fail independently**: take the money,
+release the item. Any outcome where exactly one succeeds is a real incident - a
+charged customer with no Coke, or a free Coke.
+
+### Charge first, and own the consequence
+
+Charge-then-dispense means a dispense failure leaves money taken for nothing, so
+the machine owes a refund. Dispense-then-charge means a declined card has
+already given away stock. **Charge first**: owing a refund is recoverable, a
+vanished item is not.
+
+### The state that was not added
+
+The obvious next move is a `PAYMENT_PENDING` state while the network answers.
+Applying V2a's own rule - *a state is somewhere the machine rests* - it has not
+earned its place yet. With a synchronous `authorize()` call, no caller can ever
+observe it:
+
+```
+swipeCard(card)
+  -> state = PaymentPendingState    // for the duration of one blocking call
+  -> gateway.charge(...)            // single-threaded: nobody can call anything
+  -> state = IdleState
+```
+
+It earns its place when authorization becomes asynchronous, or when concurrent
+callers make the in-flight window observable and dangerous. That is V4. Adding
+it now would be a state with no reachable entry point, needing `cancel()` and
+`showItems()` defined for a situation no user can be in.
+
+Likewise `DISPENSE_COMPLETED` and `DISPENSE_REFUND` are not states: nothing is
+awaited in either, so they are an **outcome** and an **action** on the way back
+to `IDLE`, already expressible as a `Transition`'s payload. Refunding becomes a
+real state only when the refund itself can fail and needs retrying - V5.
+
+> Name a state for what the machine is *doing now*, not for what it hopes to do
+> next. And if the machine never rests there, it is not a state.
+
+### Solution — one pipeline, two tenders
+
+`PaymentMethod` is the Strategy; `PaymentResult` is the outcome. The trap to
+avoid is branching on tender inside the state machine:
+
+```
+if (method is card) -> authorize   else -> dispense directly     // two machines
+```
+
+Instead **cash is the degenerate case**: every payment is authorized, and cash's
+authorization is a local comparison that returns immediately. `dispense()` now
+runs `new CashPayment(amountInserted).authorize(price)`, so both tenders share
+one pipeline and nothing downstream of `authorize` knows which tender it got.
+
+Before this, `CashPayment` existed but nothing constructed it, and the
+insufficient-funds rule lived in two places with two different messages - one
+rule, two codepaths, guaranteed to diverge. Now the message lives only in
+`CashPayment`.
+
+### Two entry points, one pipeline
+
+Cash declares itself by physically arriving (`insertMoney`); a card user inserts
+nothing, so there must be a second entry point. `swipeCard` forks only at
+**method construction** - both converge on `authorize`:
+
+```
+insertMoney(10), insertMoney(20)  ->  accumulate in ItemSelectedState
+dispense()                        ->  CashPayment(30).authorize(25)
+swipeCard(card)                   ->  CardPayment(card, gateway).authorize(25)
+```
+
+If the fork reaches any further - a second dispense path, a conditional on
+tender inside a state - you have built two machines.
+
+### Exceptions or results
+
+> Exceptions for "you cannot do that" and "the system is broken".
+> Results for "we tried, and the answer is no."
+
+| Situation | Mechanism | Why |
+|---|---|---|
+| swipe with nothing selected | `IllegalStateException` | illegal sequence |
+| insufficient cash | `IllegalStateException` | precondition: you have not paid yet |
+| card declined | `PurchaseResult.Declined` | an ordinary business outcome |
+| no card reader | `PurchaseResult.Declined` | a known answer, not a failure |
+| gateway timeout / unreachable | `PaymentGatewayException` | the outcome is *unknown* |
+
+`DispenseResult(Item, int change)` can only describe success, so the card path
+returns a **sealed** `PurchaseResult` of `Dispensed | Declined`. Sealed rather
+than a success flag with nullable fields: a flag lets a caller read `item()` on
+a decline and get `null`, while a sealed interface makes the compiler demand
+both branches in a `switch`. Same deny-by-default thinking as `State`.
+
+Sealing only pays off if the `switch` is used. An `instanceof` chain with an
+`else { throw new IllegalStateException("unknown type") }` throws away the
+guarantee: that branch is unreachable, and when a third permitted type arrives
+the chain silently takes it at runtime where an exhaustive switch would **fail
+to compile**.
+
+A declined card keeps the machine in `ItemSelectedState`, so the user can try
+another card - or pay cash - instead of re-selecting their item.
+
+### The gateway is a boundary
+
+`PaymentGateway` is declared by the domain and implemented at the edge
+(dependency inversion). No real implementation exists here, deliberately: a real
+one brings network, secrets and retries while teaching nothing about design, and
+cannot be told to decline on demand.
+
+- `CardsNotAcceptedGateway` - null object for a machine with no card reader.
+  Declining is honest: "no card reader" is a known answer.
+- `FakePaymentGateway` (test only) - scripted APPROVE / DECLINE / FAIL, and it
+  **records what it was asked**. The properties worth asserting are "charged
+  exactly once" and "charged exactly the price", and no return value shows
+  those. V4 will assert `chargeCount() == 1` after a duplicated request.
+- `Card` holds a gateway **token**, never a PAN: a design that cannot hold a
+  card number cannot leak one.
+
+A machine is constructible without a gateway - cash-only hardware is real - and
+that convenience constructor supplies the null object, so `swipeCard` declines
+instead of throwing `NullPointerException`.
+
+### Class diagram
+
+```mermaid
+classDiagram
+    class VendingMachine {
+        -Inventory inventory
+        -PaymentGateway paymentGateway
+        -State state
+        +showItems() List~ItemView~
+        +selectItem(String code) void
+        +insertMoney(int amount) void
+        +dispense() DispenseResult
+        +swipeCard(Card card) PurchaseResult
+        +cancel() int
+    }
+
+    class State {
+        <<interface>>
+        +deniedMessage() String
+        +selectItem(String code, Inventory inventory) Transition~Void~
+        +insertMoney(int amount) Transition~Void~
+        +dispense() Transition~DispenseResult~
+        +swipeCard(Card card, PaymentGateway gateway) Transition~PurchaseResult~
+        +cancel() Transition~Integer~
+    }
+
+    class ItemSelectedState {
+        -Slot slot
+        -int amountInserted
+    }
+
+    class PaymentMethod {
+        <<interface>>
+        +authorize(int amount) PaymentResult
+    }
+
+    class CashPayment {
+        -int amountInserted
+    }
+
+    class CardPayment {
+        -Card card
+        -PaymentGateway gateway
+    }
+
+    class PaymentGateway {
+        <<interface>>
+        +charge(Card card, int amount) PaymentResult
+    }
+
+    class CardsNotAcceptedGateway {
+        +charge(Card card, int amount) PaymentResult
+    }
+
+    class PaymentResult {
+        <<sealed>>
+        Approved(int change, String reference)
+        Declined(String reason)
+    }
+
+    class PurchaseResult {
+        <<sealed>>
+        Dispensed(Item item, int change, String reference)
+        Declined(String reason)
+    }
+
+    State <|.. IdleState : implements
+    State <|.. ItemSelectedState : implements
+    PaymentMethod <|.. CashPayment : implements
+    PaymentMethod <|.. CardPayment : implements
+    PaymentGateway <|.. CardsNotAcceptedGateway : implements
+    VendingMachine o-- State : current
+    VendingMachine --> PaymentGateway : injected
+    ItemSelectedState ..> CashPayment : dispense
+    ItemSelectedState ..> CardPayment : swipeCard
+    CardPayment --> PaymentGateway : delegates
+    PaymentMethod ..> PaymentResult : returns
+    ItemSelectedState ..> PurchaseResult : returns
+```
+
+### Flow
+
+```
+cash, unchanged since V1
+  selectItem("A1"); insertMoney(10); insertMoney(20)
+  dispense() -> CashPayment(30).authorize(25) -> Approved(change 5, "CASH")
+             -> stock--, DispenseResult(Coke, 5), state = IdleState
+
+card approved
+  selectItem("B1"); swipeCard(token)
+             -> CardPayment.authorize(15) -> gateway -> Approved(0, "AUTH-1")
+             -> stock--, Dispensed(Water, 0, "AUTH-1"), state = IdleState
+
+card declined
+  selectItem("A1"); swipeCard(token)
+             -> Declined("Card declined by issuer.")
+             -> no stock change, state stays ItemSelectedState
+  insertMoney(25); dispense()      -> the cash path still completes the sale
+
+no card reader
+  swipeCard(token) -> Declined("Card payments are not available.")
+
+gateway failure
+  swipeCard(token) -> PaymentGatewayException propagates
+                   -> state never reassigned, selection and cash survive
+                   -> but the charge is UNRECONCILED: the customer may have paid
+```
+
+### Tests
+
+59 green. The card path arrived with its own suite, because V2b's lesson was
+that `Main` displays breakage rather than failing on it - and this time the
+exposure is money.
+
+`CardPurchaseTest` asserts, per outcome: the reference and zero change on
+approval; charged **exactly once, exactly the price**; stock reduced; machine
+returned to idle. On decline: reason returned not thrown, stock untouched,
+selection kept, a second card chargeable, and cash still able to finish the
+sale. On gateway failure: propagates, nothing dispensed, state unchanged, and
+inserted cash still refundable. Plus "a refused swipe never reaches the
+gateway" - asserting `chargeCount() == 0`, which only an interrogable fake can
+show.
+
+`PaymentMethodTest` exercises the strategies with no machine at all, including a
+gateway that wrongly claims change, proving `CardPayment` normalises it to zero.
+
+### What changed, and why
+
+| | V2c | V3 |
+|---|---|---|
+| Tenders | cash only | cash and card, one authorization pipeline |
+| Payment rule location | inline in `dispense()` | `CashPayment` / `CardPayment` |
+| Failure representable? | no - success or exception | yes, `PurchaseResult.Declined` |
+| Unknown outcome | n/a | `PaymentGatewayException`, state unchanged |
+| External dependency | none | `PaymentGateway`, injected, stubbable |
+| New states | - | **none** - deliberately |
+
+### Problems with V3
+
+**The signatures are churning, exactly as predicted.**
+`selectItem(String, Inventory)` and `swipeCard(Card, PaymentGateway)`. Two
+collaborators threaded through an interface that V5 will hand a coin float and a
+transaction log. Every addition changes `State` and every implementor. This is
+when `MachineContext` earns the place it had not earned in V2c.
+
+**The charge is unreconciled on failure.** The machine knows it may have taken
+money and records nothing, so nobody can reconcile later. There is no
+transaction log, and `PaymentResult.Approved.reference()` is read once and
+discarded.
+
+**No idempotency.** A retried `swipeCard` charges again -
+`FakePaymentGateway.chargeCount()` goes to 2 - and the design has no way to say
+"this is the same purchase attempt as before".
+
+**The in-flight window is now real but unmodelled.** `authorize()` is a
+synchronous call that can take hundreds of milliseconds. With one thread that is
+merely slow; with two, a second caller can enter `dispense()` or `swipeCard()`
+on a state whose charge is still in flight, and both can pass the stock check
+before either decrements. That is V4.
+
+---

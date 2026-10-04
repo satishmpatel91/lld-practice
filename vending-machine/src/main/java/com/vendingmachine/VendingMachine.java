@@ -1,5 +1,8 @@
 package com.vendingmachine;
 
+import com.vendingmachine.payment.Card;
+import com.vendingmachine.payment.CardsNotAcceptedGateway;
+import com.vendingmachine.payment.PaymentGateway;
 import com.vendingmachine.states.IdleState;
 import com.vendingmachine.states.State;
 import com.vendingmachine.states.Transition;
@@ -7,18 +10,26 @@ import com.vendingmachine.states.Transition;
 import java.util.List;
 
 /**
- * Thin now: owns the inventory and the current state, and delegates every
- * operation to that state. It holds no transaction data of its own - the
- * selected slot and the money inserted live in ItemSelectedState, the only
- * place they ever meant anything.
+ * Thin: owns the inventory, the card gateway and the current state, and
+ * delegates every operation to that state. It holds no transaction data of its
+ * own - the selected slot and the money inserted live in ItemSelectedState, the
+ * only place they ever meant anything.
  */
 public class VendingMachine {
 
     private final Inventory inventory;
+    private final PaymentGateway paymentGateway;
+
     private State state = new IdleState();
 
+    /** A cash-only machine: swiping declines rather than failing. */
     public VendingMachine(Inventory inventory) {
+        this(inventory, new CardsNotAcceptedGateway());
+    }
+
+    public VendingMachine(Inventory inventory, PaymentGateway paymentGateway) {
         this.inventory = inventory;
+        this.paymentGateway = paymentGateway;
     }
 
     /** Legal in every state and identical in all of them, so it never goes through State. */
@@ -38,6 +49,12 @@ public class VendingMachine {
 
     public DispenseResult dispense() {
         Transition<DispenseResult> transition = state.dispense();
+        state = transition.next();
+        return transition.payload();
+    }
+
+    public PurchaseResult swipeCard(Card card) {
+        Transition<PurchaseResult> transition = state.swipeCard(card, paymentGateway);
         state = transition.next();
         return transition.payload();
     }

@@ -1,6 +1,11 @@
 package com.vendingmachine;
 
-/** A user walking up to the machine. Drives the V1 flow end to end. */
+import com.vendingmachine.payment.Card;
+import com.vendingmachine.payment.PaymentGateway;
+import com.vendingmachine.payment.PaymentGatewayException;
+import com.vendingmachine.payment.PaymentResult;
+
+/** A user walking up to the machine. Drives the cash and card flows end to end. */
 public class Main {
 
     public static void main(String[] args) {
@@ -9,7 +14,10 @@ public class Main {
         inventory.addSlot(new Slot("A2", new Item("Chips", 20), 0));
         inventory.addSlot(new Slot("B1", new Item("Water", 15), 2));
 
-        VendingMachine machine = new VendingMachine(inventory);
+        // PaymentGateway has a single method, so a demo gateway is a lambda.
+        // Nothing fake ships in production code; the scripted fake lives in src/test.
+        PaymentGateway approvingGateway = (card, amount) -> new PaymentResult.Approved(0, "DEMO-AUTH");
+        VendingMachine machine = new VendingMachine(inventory, approvingGateway);
 
         System.out.println("--- what the user sees ---");
         printMenu(machine);
@@ -44,6 +52,31 @@ public class Main {
         attempt("underpay 10 for a 25 item", () -> { machine.insertMoney(10); machine.dispense(); });
         System.out.println("  refund = " + machine.cancel());
 
+        System.out.println("--- card payments ---");
+        Card card = new Card("tok_visa_4242");
+        machine.selectItem("B1");
+        System.out.println("  approved -> " + describe(machine.swipeCard(card)));
+
+        VendingMachine declining = new VendingMachine(inventory,
+                (c, amount) -> new PaymentResult.Declined("Card declined by issuer."));
+        declining.selectItem("A1");
+        System.out.println("  declined -> " + describe(declining.swipeCard(card)));
+        System.out.println("  selection survives a decline, so cash still works:");
+        declining.insertMoney(25);
+        System.out.println("    " + declining.dispense().item().getName() + " paid in cash");
+
+        VendingMachine cashOnly = new VendingMachine(inventory);
+        cashOnly.selectItem("A1");
+        System.out.println("  no card reader -> " + describe(cashOnly.swipeCard(card)));
+        System.out.println("  refund = " + cashOnly.cancel());
+
+        VendingMachine broken = new VendingMachine(inventory, (c, amount) -> {
+            throw new PaymentGatewayException("Gateway unreachable.");
+        });
+        broken.selectItem("A1");
+        attempt("gateway failure (outcome unknown)", () -> broken.swipeCard(card));
+        System.out.println("  state did not advance, refund = " + broken.cancel());
+
         System.out.println("--- drain A1 to sold out ---");
         int buy = 0;
         while (true) {
@@ -59,6 +92,14 @@ public class Main {
         }
         System.out.println("--- menu after A1 sold out ---");
         printMenu(machine);
+    }
+
+    private static String describe(PurchaseResult result) {
+        return switch (result) {
+            case PurchaseResult.Dispensed d ->
+                    "got " + d.item().getName() + ", change " + d.change() + ", ref " + d.reference();
+            case PurchaseResult.Declined d -> "declined: " + d.reason();
+        };
     }
 
     private static void printMenu(VendingMachine machine) {
