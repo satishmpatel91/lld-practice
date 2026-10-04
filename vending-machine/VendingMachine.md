@@ -353,3 +353,211 @@ operation is legal in two states, it needs a set, and the signature strains.
 structure.
 
 ---
+
+## V2b — The transition table as data
+
+### Problem
+
+V2a named the states but left the **rules** invisible. Ask "what operations are
+legal in `ITEM_SELECTED`?" and there is no place to look: you grep for
+`requireState(ITEM_SELECTED)` and read what you find.
+
+That grep returns a **wrong** answer, not merely a slow one:
+
+| Operation | Legal in `ITEM_SELECTED`? | Visible to the grep? |
+|---|---|---|
+| `insertMoney` | yes | yes — `requireState(ITEM_SELECTED)` |
+| `dispense` | yes | yes — `requireState(ITEM_SELECTED)` |
+| `cancel` | yes | **no** — it *branches* on state instead of requiring one |
+| `showItems` | yes | **no** — legal in every state, so it has no guard at all |
+
+Operations legal everywhere, and operations that branch rather than require, are
+structurally invisible. The transition table existed only in the reader's head
+after reading every method body — and it dropped two of four entries.
+
+### Solution — put legality on the state itself
+
+A table needs two axes, so `Operation` joins `MachineState` as a first-class
+type, and each state constant declares what it permits:
+
+```
+IDLE(EnumSet.of(SHOW_ITEMS, SELECT_ITEM, CANCEL)),
+ITEM_SELECTED(EnumSet.of(SHOW_ITEMS, INSERT_MONEY, DISPENSE, CANCEL));
+```
+
+Question 21 is now answered by reading **one line**, in the type named after the
+concept.
+
+Why on the enum rather than a `Map` field in `VendingMachine`:
+
+- a map inside `VendingMachine` would give that class both the purchase flow and
+  the rulebook — the SRP complaint from V1, returning
+- it is the stepping stone to V2c, where the state object owns *behaviour*. With
+  legality already **on** the state, V2c replaces an `EnumSet` with real
+  methods; with a map, V2c starts by dismantling the map
+- a dedicated `TransitionRules` class is right only once rules come from
+  configuration or vary per machine model (V5). Today it would wrap one map, so
+  it does not earn its place — the same rule that deleted `Payment` in V1
+
+The cost: `MachineState` now depends on `Operation`. Acceptable — they are two
+halves of one concept, and the coupling is acyclic since `Operation` knows
+nothing of states.
+
+### What stays out of the table
+
+Only rules decidable from the **state alone** belong in it. Anything that must
+inspect **data** stays a condition in the method that owns the data:
+
+| Rule | Knowable from state alone? | Lives in |
+|---|---|---|
+| cannot insert money before selecting | yes | the table |
+| cannot select twice | yes | the table |
+| item is sold out | no — reads `slot.quantity` | the method |
+| insufficient funds | no — compares amount to price | the method |
+
+So `selectItem` keeps two checks for two different reasons: a table lookup (may
+I select at all?) and a data condition (is *this* slot stocked?). This is the
+same state-vs-condition split that kept `PAID` out of the enum in V2a.
+
+### Why the table cannot store `nextState`
+
+A classic transition table maps `(state, operation) -> nextState`. This one maps
+`state -> Set<Operation>` and deliberately answers only "is this move legal?".
+
+`state()` is **derived from the data**, so the next state is a *consequence* of
+what the operation does to `selectedSlot` — not something a table can dictate.
+A table declaring `nextState` would re-create two authorities on state (the
+table's claim and the data's reality), which is precisely the bug V2a was built
+to make impossible.
+
+### Class diagram
+
+```mermaid
+classDiagram
+    class VendingMachine {
+        -Inventory inventory
+        -Slot selectedSlot
+        -int amountInserted
+        -state() MachineState
+        +showItems() List~ItemView~
+        +selectItem(String code) void
+        +insertMoney(int amount) void
+        +dispense() DispenseResult
+        +cancel() int
+    }
+
+    class MachineState {
+        <<enumeration>>
+        IDLE
+        ITEM_SELECTED
+        -Set~Operation~ allowedOperations
+        +isOperationAllowed(Operation op) boolean
+        +requireOperation(Operation op, String message) void
+    }
+
+    class Operation {
+        <<enumeration>>
+        SHOW_ITEMS
+        SELECT_ITEM
+        INSERT_MONEY
+        DISPENSE
+        CANCEL
+    }
+
+    VendingMachine ..> MachineState : derives, then asks
+    MachineState ..> Operation : permits
+```
+
+### Flow
+
+```
+state() == IDLE
+selectItem("A1")   -> state().requireOperation(SELECT_ITEM) -> IDLE permits ok
+                   -> slot.isEmpty()? no                     <- data condition
+                   -> selectedSlot = A1       [state() now ITEM_SELECTED]
+selectItem("B1")   -> state().requireOperation(SELECT_ITEM)
+                   -> ITEM_SELECTED does not permit -> "An item is already selected."
+insertMoney(25)    -> ITEM_SELECTED permits INSERT_MONEY ok
+dispense()         -> ITEM_SELECTED permits DISPENSE ok
+                   -> 25 >= 25 ok                            <- data condition
+                   -> result, stock--, reset  [state() now IDLE]
+```
+
+### Two bugs this version shipped, and what they teach
+
+**The guard asked a constant, not the machine.**
+`MachineState.ITEM_SELECTED.requireOperation(INSERT_MONEY, ...)` reads
+plausibly and is a tautology: a hardcoded constant always permits its own
+operations. Every guard in the machine silently became a no-op, and the demo
+sold a Water to someone who asked for a Coke. **A lookup table is only useful
+when looked up with the state you are actually in** — `state()` from V2a is not
+replaced by the table, it is what makes the table work.
+
+**The wrong operation constant was passed.** `selectItem` asked about
+`SHOW_ITEMS`, which every state permits, so selecting twice stayed legal even
+after the receiver was fixed. Two independent bugs stacking in one guard line.
+
+Both compiled, ran, and printed "ALLOWED (no error)" with exit code 0.
+
+### Tests arrive here, not later
+
+Those two regressions shipped in consecutive rounds, each a guard that compiled
+and silently permitted an illegal sequence. `Main` *displays* breakage; it does
+not *fail* on it. 43 JUnit tests now cover:
+
+- the four `@Nested` groups in `VendingMachineTest` — happy path, illegal
+  sequences, cancel, menu
+- `MachineStateTest`, which asserts the **table itself**, without going through
+  `VendingMachine`. When V2c replaces the table with state objects, these tests
+  say whether the *rules* changed or only their implementation
+- `SlotTest` and `InventoryTest` for stock invariants and lookup behaviour
+
+Several assert more than "it throws", because these bugs were never about
+whether an exception appeared:
+
+- *"underpaying is rejected and the money is still held"* — then tops up and
+  completes, so a guard that silently zeroed the balance would still fail
+- *"selecting twice is rejected and the first selection survives"* — then buys
+  the original item, so a guard that throws but overwrites the selection fails
+- *"a rejected dispense does not consume stock"* — failure paths must not
+  decrement
+- *"every operation is permitted by at least one state"* — a table-level
+  invariant, catching an `Operation` added to the enum but to no state's set
+
+Reverting the one-token `SELECT_ITEM` fix turns the suite red on exactly the
+right test. That is the property worth buying before V4 adds threads.
+
+### What changed, and why
+
+| | V2a | V2b |
+|---|---|---|
+| Legality rules | first line of each method | one line per state on the enum |
+| "What is legal in X?" | read every method, miss two | read one line |
+| Operations legal in all states | invisible (no guard) | explicit in the table |
+| An operation legal in two states | needs a second `requireState` | already a `Set` |
+| Rules mutable at runtime | n/a | no — unmodifiable `EnumSet` copy |
+| Safety net | a demo that prints ALLOWED | 43 failing-on-regression tests |
+
+### Problems with V2b
+
+**A forgotten guard still compiles.** A new sixth operation with no
+`requireOperation` line runs unguarded. The table is consulted by convention,
+not by structure — `showItems` went unguarded for a round, and its table entries
+were simply dead data.
+
+**The operation constant can disagree with the method it guards.** Nothing ties
+`SELECT_ITEM` to `selectItem()`; passing `SHOW_ITEMS` there compiled and
+disabled the guard. The table knows *about* the operations but does not *own*
+them.
+
+**Behaviour is still centralised.** The table says what is *legal*; every method
+still contains the behaviour for all states. `OUT_OF_SERVICE` means a new enum
+constant *and* an edit to each method that must behave differently there. OCP is
+narrower than in V2a but not satisfied.
+
+**A state cannot carry its own data.** `ITEM_SELECTED` is a label with a
+permission set. It cannot hold *which* slot is selected or *how much* has been
+inserted — that payload still lives in `VendingMachine`, so state and its data
+remain apart. This is the limitation V2c removes.
+
+---

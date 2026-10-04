@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 
 import java.util.List;
 
+import static com.vendingmachine.Operation.*;
+
 @RequiredArgsConstructor
 public class VendingMachine {
     private final Inventory inventory;
@@ -18,20 +20,15 @@ public class VendingMachine {
         }
     }
 
-    private void requireState(MachineState expected, String message) {
-        if (state() != expected) {
-            throw new IllegalStateException(message);
-        }
-    }
-
     public List<ItemView> showItems() {
+        state().requireOperation(SHOW_ITEMS, "Items cannot be shown right now.");
         return inventory.allSlots().stream()
                 .map(ItemView::fromSlot)
                 .toList();
     }
 
     public void selectItem(String code) {
-        requireState(MachineState.IDLE, "An item is already selected.");
+        state().requireOperation(SELECT_ITEM, "An item is already selected.");
         Slot slot = inventory.getSlot(code);
         if (slot.isEmpty()) {
             throw new IllegalStateException("Item is sold out.");
@@ -40,7 +37,7 @@ public class VendingMachine {
     }
 
     public void insertMoney(int amount) {
-        requireState(MachineState.ITEM_SELECTED, "No item selected.");
+        state().requireOperation(INSERT_MONEY, "No item selected.");
         if (amount <= 0) {
             throw new IllegalArgumentException("Amount to insert must be positive.");
         }
@@ -48,7 +45,7 @@ public class VendingMachine {
     }
 
     public DispenseResult dispense() {
-        requireState(MachineState.ITEM_SELECTED, "No item selected.");
+        state().requireOperation(DISPENSE, "No item selected.");
         Item item = selectedSlot.getItem();
         if (amountInserted < item.getPrice()) {
             throw new IllegalStateException("Insufficient funds. Please insert more money.");
@@ -61,9 +58,7 @@ public class VendingMachine {
     }
 
     public int cancel() {
-        if (state() == MachineState.IDLE) {
-            return 0;
-        }
+        state().requireOperation(CANCEL, "No item selected.");
         int refund = amountInserted;
         selectedSlot = null;
         amountInserted = 0;
