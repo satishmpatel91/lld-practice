@@ -3,16 +3,18 @@
 A learning document. It designs a vending machine **five times**, each version a
 little better than the last.
 
-The point is not the final design. The point is *why* each change was needed.
-Every version below starts with a problem the previous version caused, and ends
-with the new problem it created. That is how real design works — you rarely get
-it right first time, and "better" only means anything compared to something
-worse.
+**Where it ends up comes first.** The design as it stands today opens the document, so
+you can see the destination and use it as a reference. Everything after it is the route
+there: five versions in order, each starting from a problem the previous one caused and
+ending with the new problem it created. That is how real design works — you rarely get
+it right first time, and "better" only means anything compared to something worse.
 
 ## How to read this
 
-Read the versions in order. If you skip to the end, the final design will look
-like a pile of patterns with no reason behind them.
+Read the final design first for orientation — class names, who owns what, which
+patterns are in play. Then read the versions **in order**, because the snapshot cannot
+tell you *why* any of it is shaped that way. On its own it looks like a pile of
+patterns with no reason behind them; the reasons are the whole point of the document.
 
 For each version, ask yourself three questions before reading the solution:
 
@@ -30,6 +32,275 @@ one adds indirection, and indirection has to earn its place.
 The code lives beside this document in `src/main/java/com/vendingmachine`, with
 tests in `src/test/java`. Run them with `mvn test` from the `vending-machine`
 folder.
+
+---
+
+## The design as it stands today (V3)
+
+Cash and card payments, two states, one authorization pipeline. 19 production classes,
+59 green tests. Two patterns are in it — **State** and **Strategy** — and each arrived
+only after a version without it had actually hurt.
+
+### The classes, and who owns what
+
+| Class | Responsibility |
+|---|---|
+| `VendingMachine` | the entry point; holds the current `State` and the injected `PaymentGateway`, fetches one `Transition` per call and applies it |
+| `State` | *interface.* Declares every operation with a **default that refuses it**; each state overrides only what it allows |
+| `IdleState` | nothing selected: allows `selectItem` and `cancel` (refunding zero) |
+| `ItemSelectedState` | a slot is chosen; carries the payload `slot` + `amountInserted`; allows `insertMoney`, `dispense`, `swipeCard`, `cancel` |
+| `Transition<T>` | *record.* What a state returns: the next state, plus the payload for this caller |
+| `Inventory` | owns the slots; finds one by its code |
+| `Slot` | one physical position (`A1`): one kind of item and a count |
+| `Item` | a product: name and price |
+| `ItemView` | *record.* The read model the display gets — facts, no power to change stock |
+| `DispenseResult` | *record.* `(item, change)` — the cash path's success |
+| `PurchaseResult` | *sealed.* `Dispensed(item, change, reference)` or `Declined(reason)` — the card path, where failure is a legitimate answer |
+| `PaymentMethod` | *interface.* `authorize(amount)` — the Strategy seam |
+| `CashPayment` | authorizes by comparing against the coins already inside; cannot fail outwardly |
+| `CardPayment` | authorizes by calling the gateway; may decline, may hang |
+| `PaymentResult` | *sealed.* `Approved(change, reference)` or `Declined(reason)` |
+| `PaymentGateway` | *interface.* The boundary to somebody else's computer; declared by the domain, implemented outside it |
+| `CardsNotAcceptedGateway` | *null object* for a machine with no card reader — declines politely instead of throwing |
+| `Card` | holds a gateway **token**, never a card number |
+| `PaymentGatewayException` | thrown when the outcome is genuinely **unknown** (timeout, unreachable) |
+
+### Class diagram
+
+```mermaid
+classDiagram
+    class VendingMachine {
+        -Inventory inventory
+        -PaymentGateway paymentGateway
+        -State state
+        +showItems() List~ItemView~
+        +selectItem(String code) void
+        +insertMoney(int amount) void
+        +dispense() DispenseResult
+        +swipeCard(Card card) PurchaseResult
+        +cancel() int
+    }
+
+    class State {
+        <<interface>>
+        +deniedMessage() String
+        +selectItem(String code, Inventory inventory) Transition~Void~
+        +insertMoney(int amount) Transition~Void~
+        +dispense() Transition~DispenseResult~
+        +swipeCard(Card card, PaymentGateway gateway) Transition~PurchaseResult~
+        +cancel() Transition~Integer~
+    }
+
+    class IdleState {
+        +selectItem(String code, Inventory inventory) Transition~Void~
+        +cancel() Transition~Integer~
+    }
+
+    class ItemSelectedState {
+        -Slot slot
+        -int amountInserted
+        +insertMoney(int amount) Transition~Void~
+        +dispense() Transition~DispenseResult~
+        +swipeCard(Card card, PaymentGateway gateway) Transition~PurchaseResult~
+        +cancel() Transition~Integer~
+    }
+
+    class Transition~T~ {
+        <<record>>
+        +State next
+        +T payload
+        +to(State next) Transition~Void~
+    }
+
+    class Inventory {
+        -Map~String, Slot~ slots
+        +addSlot(Slot) void
+        +getSlot(String code) Slot
+        +allSlots() Collection~Slot~
+    }
+
+    class Slot {
+        -String code
+        -Item item
+        -int quantity
+        +isEmpty() boolean
+        +reduceQuantity() void
+    }
+
+    class Item {
+        -String name
+        -int price
+    }
+
+    class ItemView {
+        <<record>>
+        +String slotCode
+        +String name
+        +int price
+        +boolean available
+    }
+
+    class DispenseResult {
+        <<record>>
+        +Item item
+        +int change
+    }
+
+    class PurchaseResult {
+        <<sealed>>
+        Dispensed(Item item, int change, String reference)
+        Declined(String reason)
+    }
+
+    class PaymentMethod {
+        <<interface>>
+        +authorize(int amount) PaymentResult
+    }
+
+    class CashPayment {
+        -int amountInserted
+    }
+
+    class CardPayment {
+        -Card card
+        -PaymentGateway gateway
+    }
+
+    class PaymentGateway {
+        <<interface>>
+        +charge(Card card, int amount) PaymentResult
+    }
+
+    class CardsNotAcceptedGateway {
+        +charge(Card card, int amount) PaymentResult
+    }
+
+    class PaymentResult {
+        <<sealed>>
+        Approved(int change, String reference)
+        Declined(String reason)
+    }
+
+    State <|.. IdleState : implements
+    State <|.. ItemSelectedState : implements
+    PaymentMethod <|.. CashPayment : implements
+    PaymentMethod <|.. CardPayment : implements
+    PaymentGateway <|.. CardsNotAcceptedGateway : implements
+
+    VendingMachine o-- State : current
+    VendingMachine *-- Inventory : owns
+    VendingMachine --> PaymentGateway : injected
+    VendingMachine ..> Transition : reads
+    VendingMachine ..> ItemView : shows
+    State ..> Transition : returns
+    Inventory "1" *-- "0..*" Slot : owns
+    Slot --> Item : holds
+    ItemView ..> Slot : projected from
+    ItemSelectedState --> Slot : payload
+    ItemSelectedState ..> CashPayment : dispense
+    ItemSelectedState ..> CardPayment : swipeCard
+    ItemSelectedState ..> DispenseResult : returns
+    ItemSelectedState ..> PurchaseResult : returns
+    CardPayment --> PaymentGateway : delegates
+    PaymentMethod ..> PaymentResult : returns
+```
+
+### The state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> IdleState
+    IdleState --> ItemSelectedState : selectItem(code) — exists, in stock
+    IdleState --> IdleState : cancel() — refunds 0
+    ItemSelectedState --> ItemSelectedState : insertMoney(amount)
+    ItemSelectedState --> ItemSelectedState : swipeCard — Declined (keep the selection)
+    ItemSelectedState --> IdleState : dispense() — cash authorized
+    ItemSelectedState --> IdleState : swipeCard() — card approved
+    ItemSelectedState --> IdleState : cancel() — refunds what was inserted
+```
+
+Every operation not drawn here is **refused by the interface's own default**, with no
+check written anywhere. `insertMoney` in `IdleState`, `dispense` with nothing selected,
+`swipeCard` before selecting: all land on `State`'s default and throw
+`IllegalStateException(deniedMessage())`.
+
+### Both payment paths, as built
+
+Cash and card fork **only** at the point of choosing a method. Everything downstream of
+`authorize` is identical and knows nothing about how the customer paid.
+
+```
+cash
+  selectItem("A1"); insertMoney(10); insertMoney(20)
+  dispense()   -> CashPayment(30).authorize(25) -> Approved(change 5, "CASH")
+               -> stock reduced, DispenseResult(Coke, 5), state = IdleState
+
+card approved
+  selectItem("B1"); swipeCard(token)
+               -> CardPayment.authorize(15) -> gateway -> Approved(0, "AUTH-1")
+               -> stock reduced, Dispensed(Water, 0, "AUTH-1"), state = IdleState
+
+card declined
+  swipeCard(token) -> Declined("Card declined by issuer.")
+               -> stock unchanged, state stays ItemSelectedState
+               -> a second card, or cash, can still finish the sale
+
+no card reader
+  swipeCard(token) -> Declined("Card payments are not available.")
+
+gateway failure
+  swipeCard(token) -> PaymentGatewayException thrown upwards
+               -> state never changed, so the selection and any cash survive
+```
+
+Two rules hold that together:
+
+> **Exceptions** for "you cannot do that" and "the system is broken".
+> **Return values** for "we tried, and the answer is no."
+
+> Charge first, dispense second. Owing a refund is recoverable; an item that has
+> physically dropped into the tray is not.
+
+### Where each requirement ended up
+
+| Requirement | Lives in |
+|---|---|
+| Show what is for sale | `VendingMachine.showItems` → `ItemView.fromSlot` |
+| Pick an item by code | `IdleState.selectItem`, validated against `Inventory` |
+| Put money in | `ItemSelectedState.insertMoney`, accumulated in the state's own payload |
+| Rules about order | `State`'s refusing defaults — deny by default, nothing to forget |
+| Pay by cash or card | `PaymentMethod` + `CashPayment` / `CardPayment` |
+| A payment that can fail | `PaymentResult` / `PurchaseResult`, sealed so the compiler demands both branches |
+| An outcome nobody knows | `PaymentGatewayException`, thrown with the state left untouched |
+| A machine with no card reader | `CardsNotAcceptedGateway` |
+| Talking to a bank | `PaymentGateway` — declared here, implemented outside |
+
+### What is deliberately **not** here
+
+Individual coin denominations and the machine's own coin float; real change-making that
+can fail; refills, price changes, cash collection and sales reports; a transaction log;
+idempotent retries; two users at once; and the `PaymentPendingState` that covers a
+charge in flight. Each is named in the version that refused it, with the condition that
+would make it earn its place — see **V4** and **V5** under *Still to come*.
+
+---
+
+## How we reached this design
+
+Everything above is the destination. What follows is the route — and the route is the
+part worth reading, because every class in that snapshot exists only because a simpler
+version without it failed in a specific, nameable way.
+
+| Version | The pain it fixed | What it introduced | What it still got wrong |
+|---|---|---|---|
+| **V1** | nothing — the simplest thing that works | four classes, no abstraction at all | the machine accepts nonsense; the fix looks like seven scattered `if`s |
+| **V2a** | the state was implied by data, in seven places | a `MachineState` enum, **worked out** from the data rather than stored | the rules are still `if`s; nobody can read the legal moves |
+| **V2b** | the rules were unreadable and scattered | the allowed operations written **as data** on each state | a state cannot own the data that only makes sense in it |
+| **V2c** | a state needed behaviour *and* its own payload | the **State pattern**: `State` + `IdleState` + `ItemSelectedState`, `Transition`, refusing defaults | dependencies get threaded through `State`'s signatures, which churn |
+| **V3** | only one way to pay | the **Strategy pattern**: `PaymentMethod`, the `PaymentGateway` boundary, sealed results | a failed charge is unreconciled; no idempotency; the in-flight window is real but unmodelled |
+
+Read them in that order. Each section opens with the problem it inherited and closes
+with the problem it created, which is the one the next version exists to solve.
 
 ---
 

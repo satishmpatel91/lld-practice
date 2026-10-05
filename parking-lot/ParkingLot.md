@@ -1,7 +1,282 @@
 # Parking Lot — Low Level Design
 
-Built incrementally. Each step adds exactly one requirement, and introduces an
-abstraction only when that requirement forces it.
+**Final design first, then how we got there.** The finished design opens the document,
+followed by a summary of the build order. Everything after that replays the build itself:
+each step adds exactly one requirement, and introduces an abstraction only when that
+requirement forces it.
+
+---
+
+## Final design
+
+The state after all six steps plus concurrency — the end point, shown first. Split into
+two diagrams: the domain model holds state and guards it; the service layer sequences use
+cases and owns the policies. Nothing here was designed up front; the steps that forced each
+piece start at [How we reached this design](#how-we-reached-this-design).
+
+### Domain model
+
+```mermaid
+classDiagram
+    class ParkingLot {
+        -String lotNumber
+        -List~ParkingFloor~ floors
+        -SpotAllocationStrategy allocationStrategy
+        +claimFreeSpot(VehicleType) Optional~ParkingSpot~
+        +findSpot(String) Optional~ParkingSpot~
+        +freeSpotCount(VehicleType) int
+        +getLotNumber() String
+    }
+
+    class ParkingFloor {
+        -List~ParkingSpot~ spots
+        +ParkingFloor(String, List~SpotSpec~)
+        +freeSpotsFor(VehicleType) List~ParkingSpot~
+        +findSpot(String) Optional~ParkingSpot~
+        +freeSpotCount(VehicleType) int
+    }
+
+    class ParkingSpot {
+        -String spotNumber
+        -String floorNumber
+        -SpotType spotType
+        -int distanceFromEntrance
+        -AtomicBoolean occupied
+        +canFit(VehicleType) boolean
+        +tryOccupy() boolean
+        +free() void
+        +isOccupied() boolean
+    }
+
+    class SpotSpec {
+        <<record>>
+        +SpotType type
+        +int distanceFromEntrance
+    }
+
+    class Vehicle {
+        <<record>>
+        +String vehicleNumber
+        +VehicleType vehicleType
+    }
+
+    class Gate {
+        -String gateId
+        -GateType gateType
+    }
+
+    class Ticket {
+        <<record>>
+        +String ticketId
+        +String gateNo
+        +String spotNumber
+        +String vehicleNumber
+        +Instant entryTime
+        +RatePlan ratePlan
+    }
+
+    class Receipt {
+        <<record>>
+        +String receiptId
+        +String gateNo
+        +Ticket ticket
+        +Instant exitTime
+        +BigDecimal price
+    }
+
+    class SpotType {
+        <<enumeration>>
+        SMALL
+        MEDIUM
+        LARGE
+        -Set~VehicleType~ acceptedVehicleTypes
+        +accepts(VehicleType) boolean
+    }
+
+    class VehicleType {
+        <<enumeration>>
+        SMALL
+        MEDIUM
+        LARGE
+    }
+
+    class GateType {
+        <<enumeration>>
+        ENTRY
+        EXIT
+    }
+
+    class RatePlan {
+        <<enumeration>>
+        HOURLY
+        DAILY
+    }
+
+    ParkingLot "1" *-- "1..*" ParkingFloor : contains
+    ParkingFloor "1" *-- "0..*" ParkingSpot : builds and owns
+    ParkingFloor ..> SpotSpec : built from
+    ParkingSpot --> SpotType : sized by
+    SpotType --> VehicleType : accepts
+    Vehicle --> VehicleType : sized by
+    Gate --> GateType : typed by
+    Ticket --> RatePlan : priced by
+    Ticket ..> ParkingSpot : refers by spotNumber
+    Receipt "1" *-- "1" Ticket : embeds
+```
+
+### Service layer and policies
+
+```mermaid
+classDiagram
+    class ParkingLotService {
+        -ParkingLot parkingLot
+        -Clock clock
+        -TicketRepository ticketRepository
+        -Map~RatePlan, FeeCalculator~ feeCalculators
+        +park(Vehicle, Gate, RatePlan) Optional~Ticket~
+        +unpark(String, Gate) Optional~Receipt~
+        -requireGateType(Gate, GateType) void
+    }
+
+    class TicketRepository {
+        -Map~String, Ticket~ tickets
+        +save(Ticket) void
+        +findById(String) Optional~Ticket~
+        +remove(String) void
+    }
+
+    class FeeCalculator {
+        <<interface>>
+        +calculate(Ticket, Instant) BigDecimal
+    }
+
+    class HourlyFeeCalculator {
+        -BigDecimal ratePerHour
+    }
+
+    class DailyFeeCalculator {
+        -BigDecimal ratePerDay
+    }
+
+    class SpotAllocationStrategy {
+        <<interface>>
+        +claimFrom(List~ParkingSpot~) Optional~ParkingSpot~
+        +claimInOrder(List~ParkingSpot~) Optional~ParkingSpot~
+    }
+
+    class FirstAvailableStrategy {
+        +claimFrom(List~ParkingSpot~) Optional~ParkingSpot~
+    }
+
+    class NearestToEntranceStrategy {
+        +claimFrom(List~ParkingSpot~) Optional~ParkingSpot~
+    }
+
+    FeeCalculator <|.. HourlyFeeCalculator : implements
+    FeeCalculator <|.. DailyFeeCalculator : implements
+    SpotAllocationStrategy <|.. FirstAvailableStrategy : implements
+    SpotAllocationStrategy <|.. NearestToEntranceStrategy : implements
+
+    ParkingLotService --> ParkingLot : claims spots from
+    ParkingLotService --> TicketRepository : stores tickets in
+    ParkingLotService --> FeeCalculator : prices exits with
+    ParkingLot --> SpotAllocationStrategy : delegates allocation to
+```
+
+### Entry and exit, as built
+
+```mermaid
+sequenceDiagram
+    actor Driver
+    participant Gate as Gate (ENTRY)
+    participant Service as ParkingLotService
+    participant Lot as ParkingLot
+    participant Floor as ParkingFloor
+    participant Policy as SpotAllocationStrategy
+    participant Spot as ParkingSpot
+    participant Repo as TicketRepository
+
+    Driver->>Gate: arrives
+    Gate->>Service: park(vehicle, gate, ratePlan)
+    Service->>Service: requireGateType(gate, ENTRY)
+    Service->>Lot: claimFreeSpot(vehicleType)
+    Lot->>Floor: freeSpotsFor(vehicleType)
+    Floor-->>Lot: candidate snapshot
+    Lot->>Policy: claimFrom(candidates)
+    Policy->>Spot: tryOccupy()
+    Spot-->>Policy: won / lost - try next on lost
+    Policy-->>Lot: claimed spot
+    Lot-->>Service: Optional~ParkingSpot~
+    Service->>Repo: save(ticket)
+    Service-->>Gate: Optional~Ticket~
+    Gate-->>Driver: printed ticket
+```
+
+```mermaid
+sequenceDiagram
+    actor Driver
+    participant Gate as Gate (EXIT)
+    participant Service as ParkingLotService
+    participant Repo as TicketRepository
+    participant Calc as FeeCalculator
+    participant Lot as ParkingLot
+    participant Spot as ParkingSpot
+
+    Driver->>Gate: presents ticket
+    Gate->>Service: unpark(ticketId, gate)
+    Service->>Service: requireGateType(gate, EXIT)
+    Service->>Repo: findById(ticketId)
+    Repo-->>Service: empty -> Optional.empty() to the gate
+    Service->>Calc: calculate(ticket, exitTime)
+    Calc-->>Service: price
+    Service->>Lot: findSpot(ticket.spotNumber)
+    Lot-->>Service: spot, or IllegalStateException
+    Service->>Spot: free()
+    Service->>Repo: remove(ticketId)
+    Service-->>Gate: Optional~Receipt~
+    Gate-->>Driver: receipt
+```
+
+### Where each requirement ended up
+
+| Requirement | Lives in |
+| --- | --- |
+| Park and unpark | `ParkingLotService` sequences it; `Main` wires it |
+| Vehicle sizes and the fit rule | `SpotType.acceptedVehicleTypes`, reached via `ParkingSpot.canFit` |
+| Multiple gates | `Gate` + `GateType`, validated in `requireGateType`; `TicketRepository` makes enter-here-leave-there possible |
+| Multiple floors | `ParkingFloor`, which also names its own spots |
+| Two pricing schemes | `FeeCalculator` impls, selected by the `RatePlan` recorded on the ticket |
+| Pluggable allocation | `SpotAllocationStrategy` impls, injected into `ParkingLot` |
+| Concurrent gates | `ParkingSpot`'s CAS, claim-inside-allocation, `ConcurrentHashMap` |
+
+**Final tally:** 21 production classes, 424 lines of production code, 884 lines of tests, 82 tests.
+
+---
+
+## Progression summary
+
+| Step | Requirement | What it forced | What it did **not** force |
+| --- | --- | --- | --- |
+| 1 | Park and unpark | `ParkingLot`, `ParkingSpot`, `Vehicle`, `Ticket`, `Receipt` | Any abstraction at all |
+| 2 | Vehicle sizes | Two enums, `canFit` on the spot | A `SpotAllocationStrategy` |
+| 3 | Multiple gates | `TicketRepository` (SRP split), `ParkingLotService`, one `Gate` + enum | `EntryGate` / `ExitGate` subclasses |
+| 4 | Multiple floors | `ParkingFloor`, globally unique opaque spot id, delegated search | Changes to `Ticket` or `TicketRepository` |
+| 5 | Two pricing schemes | `FeeCalculator` interface + 2 impls, `RatePlan` on the ticket | A payment-method hierarchy |
+| 6 | Pluggable allocation | `SpotAllocationStrategy` + 2 impls, `SpotSpec` carrying distance, `freeSpotsFor` | A `Comparator`, runtime policy switching, per-driver preferences |
+| — | Concurrent gates | Atomic `claimFreeSpot`, CAS on the spot, `ConcurrentHashMap` | Locks on the lot, a queue, or any thread pool of its own |
+
+**Still unbuilt, deliberately:** display boards, reservations, EV charging,
+handicapped priority, multiple payment methods, concurrency, persistence,
+notifications. Each waits for a requirement.
+
+---
+
+## How we reached this design
+
+Everything above is the destination. What follows is the route: six steps and a
+concurrency pass, in the order they were built. Each step starts from the previous
+step's code, states the single new requirement, and shows what that requirement forced —
+and, just as importantly, what it did not.
 
 ---
 
@@ -583,268 +858,6 @@ two classes it was two layers from the thing under test.
 
 Deliberately different numbers for the same duration — if both plans priced a 25-hour stay the
 same, the wiring test would pass with the calculators swapped.
-
----
-
-## Final design
-
-The state after all six steps plus concurrency. Split into two diagrams: the domain model
-holds state and guards it; the service layer sequences use cases and owns the policies.
-
-### Domain model
-
-```mermaid
-classDiagram
-    class ParkingLot {
-        -String lotNumber
-        -List~ParkingFloor~ floors
-        -SpotAllocationStrategy allocationStrategy
-        +claimFreeSpot(VehicleType) Optional~ParkingSpot~
-        +findSpot(String) Optional~ParkingSpot~
-        +freeSpotCount(VehicleType) int
-        +getLotNumber() String
-    }
-
-    class ParkingFloor {
-        -List~ParkingSpot~ spots
-        +ParkingFloor(String, List~SpotSpec~)
-        +freeSpotsFor(VehicleType) List~ParkingSpot~
-        +findSpot(String) Optional~ParkingSpot~
-        +freeSpotCount(VehicleType) int
-    }
-
-    class ParkingSpot {
-        -String spotNumber
-        -String floorNumber
-        -SpotType spotType
-        -int distanceFromEntrance
-        -AtomicBoolean occupied
-        +canFit(VehicleType) boolean
-        +tryOccupy() boolean
-        +free() void
-        +isOccupied() boolean
-    }
-
-    class SpotSpec {
-        <<record>>
-        +SpotType type
-        +int distanceFromEntrance
-    }
-
-    class Vehicle {
-        <<record>>
-        +String vehicleNumber
-        +VehicleType vehicleType
-    }
-
-    class Gate {
-        -String gateId
-        -GateType gateType
-    }
-
-    class Ticket {
-        <<record>>
-        +String ticketId
-        +String gateNo
-        +String spotNumber
-        +String vehicleNumber
-        +Instant entryTime
-        +RatePlan ratePlan
-    }
-
-    class Receipt {
-        <<record>>
-        +String receiptId
-        +String gateNo
-        +Ticket ticket
-        +Instant exitTime
-        +BigDecimal price
-    }
-
-    class SpotType {
-        <<enumeration>>
-        SMALL
-        MEDIUM
-        LARGE
-        -Set~VehicleType~ acceptedVehicleTypes
-        +accepts(VehicleType) boolean
-    }
-
-    class VehicleType {
-        <<enumeration>>
-        SMALL
-        MEDIUM
-        LARGE
-    }
-
-    class GateType {
-        <<enumeration>>
-        ENTRY
-        EXIT
-    }
-
-    class RatePlan {
-        <<enumeration>>
-        HOURLY
-        DAILY
-    }
-
-    ParkingLot "1" *-- "1..*" ParkingFloor : contains
-    ParkingFloor "1" *-- "0..*" ParkingSpot : builds and owns
-    ParkingFloor ..> SpotSpec : built from
-    ParkingSpot --> SpotType : sized by
-    SpotType --> VehicleType : accepts
-    Vehicle --> VehicleType : sized by
-    Gate --> GateType : typed by
-    Ticket --> RatePlan : priced by
-    Ticket ..> ParkingSpot : refers by spotNumber
-    Receipt "1" *-- "1" Ticket : embeds
-```
-
-### Service layer and policies
-
-```mermaid
-classDiagram
-    class ParkingLotService {
-        -ParkingLot parkingLot
-        -Clock clock
-        -TicketRepository ticketRepository
-        -Map~RatePlan, FeeCalculator~ feeCalculators
-        +park(Vehicle, Gate, RatePlan) Optional~Ticket~
-        +unpark(String, Gate) Optional~Receipt~
-        -requireGateType(Gate, GateType) void
-    }
-
-    class TicketRepository {
-        -Map~String, Ticket~ tickets
-        +save(Ticket) void
-        +findById(String) Optional~Ticket~
-        +remove(String) void
-    }
-
-    class FeeCalculator {
-        <<interface>>
-        +calculate(Ticket, Instant) BigDecimal
-    }
-
-    class HourlyFeeCalculator {
-        -BigDecimal ratePerHour
-    }
-
-    class DailyFeeCalculator {
-        -BigDecimal ratePerDay
-    }
-
-    class SpotAllocationStrategy {
-        <<interface>>
-        +claimFrom(List~ParkingSpot~) Optional~ParkingSpot~
-        +claimInOrder(List~ParkingSpot~) Optional~ParkingSpot~
-    }
-
-    class FirstAvailableStrategy {
-        +claimFrom(List~ParkingSpot~) Optional~ParkingSpot~
-    }
-
-    class NearestToEntranceStrategy {
-        +claimFrom(List~ParkingSpot~) Optional~ParkingSpot~
-    }
-
-    FeeCalculator <|.. HourlyFeeCalculator : implements
-    FeeCalculator <|.. DailyFeeCalculator : implements
-    SpotAllocationStrategy <|.. FirstAvailableStrategy : implements
-    SpotAllocationStrategy <|.. NearestToEntranceStrategy : implements
-
-    ParkingLotService --> ParkingLot : claims spots from
-    ParkingLotService --> TicketRepository : stores tickets in
-    ParkingLotService --> FeeCalculator : prices exits with
-    ParkingLot --> SpotAllocationStrategy : delegates allocation to
-```
-
-### Entry and exit, as built
-
-```mermaid
-sequenceDiagram
-    actor Driver
-    participant Gate as Gate (ENTRY)
-    participant Service as ParkingLotService
-    participant Lot as ParkingLot
-    participant Floor as ParkingFloor
-    participant Policy as SpotAllocationStrategy
-    participant Spot as ParkingSpot
-    participant Repo as TicketRepository
-
-    Driver->>Gate: arrives
-    Gate->>Service: park(vehicle, gate, ratePlan)
-    Service->>Service: requireGateType(gate, ENTRY)
-    Service->>Lot: claimFreeSpot(vehicleType)
-    Lot->>Floor: freeSpotsFor(vehicleType)
-    Floor-->>Lot: candidate snapshot
-    Lot->>Policy: claimFrom(candidates)
-    Policy->>Spot: tryOccupy()
-    Spot-->>Policy: won / lost - try next on lost
-    Policy-->>Lot: claimed spot
-    Lot-->>Service: Optional~ParkingSpot~
-    Service->>Repo: save(ticket)
-    Service-->>Gate: Optional~Ticket~
-    Gate-->>Driver: printed ticket
-```
-
-```mermaid
-sequenceDiagram
-    actor Driver
-    participant Gate as Gate (EXIT)
-    participant Service as ParkingLotService
-    participant Repo as TicketRepository
-    participant Calc as FeeCalculator
-    participant Lot as ParkingLot
-    participant Spot as ParkingSpot
-
-    Driver->>Gate: presents ticket
-    Gate->>Service: unpark(ticketId, gate)
-    Service->>Service: requireGateType(gate, EXIT)
-    Service->>Repo: findById(ticketId)
-    Repo-->>Service: empty -> Optional.empty() to the gate
-    Service->>Calc: calculate(ticket, exitTime)
-    Calc-->>Service: price
-    Service->>Lot: findSpot(ticket.spotNumber)
-    Lot-->>Service: spot, or IllegalStateException
-    Service->>Spot: free()
-    Service->>Repo: remove(ticketId)
-    Service-->>Gate: Optional~Receipt~
-    Gate-->>Driver: receipt
-```
-
-### Where each requirement ended up
-
-| Requirement | Lives in |
-| --- | --- |
-| Park and unpark | `ParkingLotService` sequences it; `Main` wires it |
-| Vehicle sizes and the fit rule | `SpotType.acceptedVehicleTypes`, reached via `ParkingSpot.canFit` |
-| Multiple gates | `Gate` + `GateType`, validated in `requireGateType`; `TicketRepository` makes enter-here-leave-there possible |
-| Multiple floors | `ParkingFloor`, which also names its own spots |
-| Two pricing schemes | `FeeCalculator` impls, selected by the `RatePlan` recorded on the ticket |
-| Pluggable allocation | `SpotAllocationStrategy` impls, injected into `ParkingLot` |
-| Concurrent gates | `ParkingSpot`'s CAS, claim-inside-allocation, `ConcurrentHashMap` |
-
-**Final tally:** 21 production classes, 424 lines of production code, 884 lines of tests, 82 tests.
-
----
-
-## Progression summary
-
-| Step | Requirement | What it forced | What it did **not** force |
-| --- | --- | --- | --- |
-| 1 | Park and unpark | `ParkingLot`, `ParkingSpot`, `Vehicle`, `Ticket`, `Receipt` | Any abstraction at all |
-| 2 | Vehicle sizes | Two enums, `canFit` on the spot | A `SpotAllocationStrategy` |
-| 3 | Multiple gates | `TicketRepository` (SRP split), `ParkingLotService`, one `Gate` + enum | `EntryGate` / `ExitGate` subclasses |
-| 4 | Multiple floors | `ParkingFloor`, globally unique opaque spot id, delegated search | Changes to `Ticket` or `TicketRepository` |
-| 5 | Two pricing schemes | `FeeCalculator` interface + 2 impls, `RatePlan` on the ticket | A payment-method hierarchy |
-| 6 | Pluggable allocation | `SpotAllocationStrategy` + 2 impls, `SpotSpec` carrying distance, `freeSpotsFor` | A `Comparator`, runtime policy switching, per-driver preferences |
-| — | Concurrent gates | Atomic `claimFreeSpot`, CAS on the spot, `ConcurrentHashMap` | Locks on the lot, a queue, or any thread pool of its own |
-
-**Still unbuilt, deliberately:** display boards, reservations, EV charging,
-handicapped priority, multiple payment methods, concurrency, persistence,
-notifications. Each waits for a requirement.
 
 ---
 
