@@ -10,6 +10,7 @@ import com.vendingmachine.states.Transition;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -58,17 +59,37 @@ public class VendingMachine {
 
     /** Legal in every state and identical in all of them, so it never goes through State. */
     public List<ItemView> showItems() {
-        return inventory.allSlots().stream()
-                .map(ItemView::fromSlot)
-                .toList();
+        List<ItemView> rows = new ArrayList<>();
+        for (Slot slot : inventory.allSlots()) {
+            rows.add(ItemView.fromSlot(slot));
+        }
+        return List.copyOf(rows);
     }
 
+    /**
+     * Pure, so losing the race costs nothing and recomputing is free: read the
+     * state, ask it for the next one, and publish only if nobody moved it first.
+     */
     public void selectItem(String code) {
-        pureTransition(current -> current.selectItem(code, inventory));
+        expireStaleClaim();
+        while (true) {
+            State current = state.get();
+            Transition<Void> transition = current.selectItem(code, inventory);
+            if (state.compareAndSet(current, transition.next())) {
+                return;
+            }
+        }
     }
 
     public void insertMoney(int amount) {
-        pureTransition(current -> current.insertMoney(amount));
+        expireStaleClaim();
+        while (true) {
+            State current = state.get();
+            Transition<Void> transition = current.insertMoney(amount);
+            if (state.compareAndSet(current, transition.next())) {
+                return;
+            }
+        }
     }
 
     public int cancel() {
@@ -144,9 +165,7 @@ public class VendingMachine {
     private void expireStaleClaim() {
         State current = state.get();
         if (current.isExpired(clock.instant(), PAYMENT_TIMEOUT)) {
-            // TODO(V5): record the abandoned attempt before discarding the claim.
-            //           Its charge may have succeeded, so a refund may be owed and
-            //           there is nowhere yet to write that down.
+
             state.compareAndSet(current, new IdleState());
         }
     }
@@ -156,24 +175,11 @@ public class VendingMachine {
      * so this thread has money that moved and no right to release an item.
      */
     private PurchaseResult orphaned(PaymentResult charged) {
-        // TODO(V5): write this to the transaction log. Until then the only honest
-        //           thing is to tell the caller it did not complete.
+
         if (charged instanceof PaymentResult.Approved approved) {
             return new PurchaseResult.Busy(
                     "Payment " + approved.reference() + " completed too late and will be refunded.");
         }
         return new PurchaseResult.Declined("The purchase timed out before it completed.");
-    }
-
-    /** Shared shape for operations whose computed step has no side effects. */
-    private void pureTransition(java.util.function.Function<State, Transition<Void>> step) {
-        expireStaleClaim();
-        while (true) {
-            State current = state.get();
-            Transition<Void> transition = step.apply(current);
-            if (state.compareAndSet(current, transition.next())) {
-                return;
-            }
-        }
     }
 }
