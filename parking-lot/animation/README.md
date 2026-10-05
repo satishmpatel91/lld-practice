@@ -50,6 +50,19 @@ calls with a gap, which prints two tickets for one bay) and `claimFreeSpot`
 next candidate). Below it, the `compareAndSet` return-value bug and why it did
 more damage than a crash.
 
+## The class diagram, zoomable
+
+Mermaid in a markdown viewer renders at one fixed size, which is useless for a
+twenty-class picture. The page carries the same diagram in a frame you can work:
+
+- **drag** to pan
+- **scroll** or **pinch** to zoom, centred on the pointer
+- **double-click**, or the `FIT` button, to fit it back to the width
+- `+` / `-` buttons for keyboard-free zooming
+
+It is the same Mermaid source as the one in the markdown, rendered natively by the
+page, so the two cannot drift apart.
+
 ## Notes
 
 - One file, no libraries. Fonts come from Google Fonts; everything else is inline.
