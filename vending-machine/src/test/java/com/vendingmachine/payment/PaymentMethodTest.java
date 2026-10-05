@@ -41,9 +41,9 @@ class PaymentMethodTest {
     @Test
     @DisplayName("card normalises change to zero even if a gateway claims otherwise")
     void cardNeverReturnsChange() {
-        PaymentGateway overpayingGateway = (card, amount) -> new PaymentResult.Approved(99, "AUTH-X");
+        PaymentGateway overpayingGateway = (card, amount, key) -> new PaymentResult.Approved(99, "AUTH-X");
 
-        PaymentResult result = new CardPayment(CARD, overpayingGateway).authorize(25);
+        PaymentResult result = new CardPayment(CARD, overpayingGateway, "key-1").authorize(25);
 
         assertEquals(0, assertInstanceOf(PaymentResult.Approved.class, result).change());
     }
@@ -51,7 +51,7 @@ class PaymentMethodTest {
     @Test
     @DisplayName("card passes the decline reason through untouched")
     void cardPassesDeclineThrough() {
-        PaymentResult result = new CardPayment(CARD, new FakePaymentGateway(Behaviour.DECLINE)).authorize(25);
+        PaymentResult result = new CardPayment(CARD, new FakePaymentGateway(Behaviour.DECLINE), "key-2").authorize(25);
 
         assertEquals("Card declined by issuer.",
                 assertInstanceOf(PaymentResult.Declined.class, result).reason());
@@ -60,9 +60,36 @@ class PaymentMethodTest {
     @Test
     @DisplayName("card lets a gateway failure propagate rather than calling it a decline")
     void cardPropagatesGatewayFailure() {
-        CardPayment payment = new CardPayment(CARD, new FakePaymentGateway(Behaviour.FAIL));
+        CardPayment payment = new CardPayment(CARD, new FakePaymentGateway(Behaviour.FAIL), "key-3");
 
         assertThrows(PaymentGatewayException.class, () -> payment.authorize(25));
+    }
+
+    @Test
+    @DisplayName("the same attempt presented twice moves money once")
+    void sameAttemptChargesOnce() {
+        FakePaymentGateway gateway = new FakePaymentGateway(Behaviour.APPROVE);
+        CardPayment payment = new CardPayment(CARD, gateway, "attempt-7");
+
+        PaymentResult first = payment.authorize(25);
+        PaymentResult second = payment.authorize(25);
+
+        assertEquals(2, gateway.callCount(), "the gateway was asked twice");
+        assertEquals(1, gateway.chargeCount(), "but money moved once");
+        assertEquals(assertInstanceOf(PaymentResult.Approved.class, first).reference(),
+                assertInstanceOf(PaymentResult.Approved.class, second).reference(),
+                "the same attempt gets the same reference back");
+    }
+
+    @Test
+    @DisplayName("a different attempt is a different charge")
+    void differentAttemptChargesAgain() {
+        FakePaymentGateway gateway = new FakePaymentGateway(Behaviour.APPROVE);
+
+        new CardPayment(CARD, gateway, "attempt-1").authorize(25);
+        new CardPayment(CARD, gateway, "attempt-2").authorize(25);
+
+        assertEquals(2, gateway.chargeCount());
     }
 
     @Test
@@ -70,7 +97,7 @@ class PaymentMethodTest {
     void cardRefusesNonPositiveAmount() {
         FakePaymentGateway gateway = new FakePaymentGateway(Behaviour.APPROVE);
 
-        assertThrows(IllegalArgumentException.class, () -> new CardPayment(CARD, gateway).authorize(0));
+        assertThrows(IllegalArgumentException.class, () -> new CardPayment(CARD, gateway, "key-4").authorize(0));
 
         assertEquals(0, gateway.chargeCount());
     }

@@ -43,5 +43,13 @@ an animation of the V4 race condition — two threads both reading
   inline.
 - Works in light and dark, down to phone width, and honours
   `prefers-reduced-motion` by running the animations instantly.
-- V4 and V5 appear as the *problems* they are, not as finished designs, because
-  the Java for them does not exist yet.
+- **V4 is operable.** Set the gateway to "times out" and the machine enters
+  `PAYMENT_PENDING` and *stays* there: the claim is held on purpose, so cancel
+  and select are refused, and a second swipe comes back `Busy`. Press
+  "+31s" to let the next request take the stale claim over - the log then says
+  what nobody has recorded.
+- The race animation has two modes: V3's single read-then-write step, which
+  charges two cards for one can, and V4's claim / act / commit, where the loser
+  never reaches the gateway.
+- V5 appears as the *problem* it is, not a finished design, because the Java for
+  it does not exist yet.

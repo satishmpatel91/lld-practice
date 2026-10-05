@@ -5,6 +5,9 @@ import com.vendingmachine.payment.FakePaymentGateway;
 import com.vendingmachine.payment.FakePaymentGateway.Behaviour;
 import com.vendingmachine.payment.PaymentGatewayException;
 import org.junit.jupiter.api.BeforeEach;
+
+import java.time.Duration;
+import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -140,7 +143,8 @@ class CardPurchaseTest {
             assertEquals("An item is already selected.",
                     assertThrows(IllegalStateException.class, () -> machine.selectItem("B1")).getMessage());
             assertInstanceOf(PurchaseResult.Declined.class, machine.swipeCard(new Card("tok_other")));
-            assertEquals(2, gateway.chargeCount());
+            assertEquals(2, gateway.callCount(), "two attempts reached the gateway");
+            assertEquals(0, gateway.chargeCount(), "a decline moves no money");
         }
 
         @Test
@@ -183,15 +187,52 @@ class CardPurchaseTest {
         }
 
         @Test
-        @DisplayName("does not advance the state, so the selection and any cash survive")
-        void doesNotAdvanceState() {
-            VendingMachine machine = machineWith(gateway);
+        @DisplayName("holds the claim, so nobody can buy an item we may already have paid for")
+        void holdsTheClaimUntilItGoesStale() {
+            MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+            VendingMachine machine = new VendingMachine(inventory, gateway, clock);
             machine.selectItem("A1");
             machine.insertMoney(10);
 
             assertThrows(PaymentGatewayException.class, () -> machine.swipeCard(CARD));
 
-            assertEquals(10, machine.cancel(), "the cash must still be refundable");
+            // the claim is deliberately NOT released: the outcome of the charge is unknown
+            assertEquals("A payment is already in progress.",
+                    assertThrows(IllegalStateException.class, machine::cancel).getMessage());
+            assertEquals("A payment is already in progress.",
+                    assertThrows(IllegalStateException.class, () -> machine.selectItem("B1")).getMessage());
+            assertEquals(2, inventory.getSlot("A1").getQuantity(), "and the item is still reserved");
+        }
+
+        @Test
+        @DisplayName("a stale claim is taken over by the next request")
+        void staleClaimIsTakenOver() {
+            MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+            VendingMachine machine = new VendingMachine(inventory, gateway, clock);
+            machine.selectItem("A1");
+            assertThrows(PaymentGatewayException.class, () -> machine.swipeCard(CARD));
+
+            clock.advance(Duration.ofSeconds(31));
+
+            machine.selectItem("B1");                       // the takeover succeeded
+            machine.insertMoney(15);
+            assertEquals("Water", machine.dispense().item().getName());
+        }
+
+        @Test
+        @DisplayName("KNOWN GAP: expiring a claim forgets the cash the customer put in")
+        void expiryCurrentlyForgetsInsertedCash() {
+            MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+            VendingMachine machine = new VendingMachine(inventory, gateway, clock);
+            machine.selectItem("A1");
+            machine.insertMoney(10);
+            assertThrows(PaymentGatewayException.class, () -> machine.swipeCard(CARD));
+
+            clock.advance(Duration.ofSeconds(31));
+
+            // the 10 is physically inside the machine, but the state that recorded it
+            // was discarded with the claim. V5 needs somewhere to write this down.
+            assertEquals(0, machine.cancel(), "documents the gap, it is not the desired behaviour");
         }
     }
 

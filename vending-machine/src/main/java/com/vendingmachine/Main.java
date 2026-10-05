@@ -16,7 +16,7 @@ public class Main {
 
         // PaymentGateway has a single method, so a demo gateway is a lambda.
         // Nothing fake ships in production code; the scripted fake lives in src/test.
-        PaymentGateway approvingGateway = (card, amount) -> new PaymentResult.Approved(0, "DEMO-AUTH");
+        PaymentGateway approvingGateway = (card, amount, key) -> new PaymentResult.Approved(0, "DEMO-AUTH");
         VendingMachine machine = new VendingMachine(inventory, approvingGateway);
 
         System.out.println("--- what the user sees ---");
@@ -58,7 +58,7 @@ public class Main {
         System.out.println("  approved -> " + describe(machine.swipeCard(card)));
 
         VendingMachine declining = new VendingMachine(inventory,
-                (c, amount) -> new PaymentResult.Declined("Card declined by issuer."));
+                (c, amount, key) -> new PaymentResult.Declined("Card declined by issuer."));
         declining.selectItem("A1");
         System.out.println("  declined -> " + describe(declining.swipeCard(card)));
         System.out.println("  selection survives a decline, so cash still works:");
@@ -70,12 +70,16 @@ public class Main {
         System.out.println("  no card reader -> " + describe(cashOnly.swipeCard(card)));
         System.out.println("  refund = " + cashOnly.cancel());
 
-        VendingMachine broken = new VendingMachine(inventory, (c, amount) -> {
+        VendingMachine broken = new VendingMachine(inventory, (c, amount, key) -> {
             throw new PaymentGatewayException("Gateway unreachable.");
         });
         broken.selectItem("A1");
         attempt("gateway failure (outcome unknown)", () -> broken.swipeCard(card));
-        System.out.println("  state did not advance, refund = " + broken.cancel());
+        System.out.println("  the claim is held on purpose, so nobody can buy an item we may have paid for:");
+        attempt("  cancel while the charge is unresolved", broken::cancel);
+        attempt("  select something else", () -> broken.selectItem("B1"));
+        System.out.println("  after the 30s timeout a later request takes the claim over (see the tests,");
+        System.out.println("  which move an injected Clock instead of waiting)");
 
         System.out.println("--- drain A1 to sold out ---");
         int buy = 0;
@@ -99,6 +103,7 @@ public class Main {
             case PurchaseResult.Dispensed d ->
                     "got " + d.item().getName() + ", change " + d.change() + ", ref " + d.reference();
             case PurchaseResult.Declined d -> "declined: " + d.reason();
+            case PurchaseResult.Busy b -> "busy: " + b.reason();
         };
     }
 

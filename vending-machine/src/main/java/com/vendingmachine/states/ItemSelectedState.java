@@ -2,13 +2,12 @@ package com.vendingmachine.states;
 
 import com.vendingmachine.DispenseResult;
 import com.vendingmachine.Item;
-import com.vendingmachine.PurchaseResult;
 import com.vendingmachine.Slot;
 import com.vendingmachine.payment.Card;
-import com.vendingmachine.payment.CardPayment;
 import com.vendingmachine.payment.CashPayment;
-import com.vendingmachine.payment.PaymentGateway;
 import com.vendingmachine.payment.PaymentResult;
+
+import java.time.Instant;
 
 /**
  * A slot is selected and some cash may be held. Immutable: every change is a
@@ -37,43 +36,39 @@ public final class ItemSelectedState implements State {
         return Transition.to(new ItemSelectedState(slot, amountInserted + amount));
     }
 
+    /** Pure: nothing irreversible happens when a card payment is claimed. */
+    @Override
+    public Transition<Void> beginCardPayment(Card card, Instant startedAt, String attemptId) {
+        return Transition.to(new PaymentPendingState(slot, amountInserted, card, startedAt, attemptId));
+    }
+
     /**
-     * Cash goes through the same authorization pipeline as a card. Its decline
-     * is a precondition violation - "you have not paid yet" - so it throws,
-     * which is the contract every version since V1 has kept.
+     * Cash goes through the same authorization pipeline as a card, and its
+     * authorization is local, so there is nothing to wait for and no claim to hold.
      */
     @Override
-    public Transition<DispenseResult> dispense() {
-        Item item = slot.getItem();
-        PaymentResult result = new CashPayment(amountInserted).authorize(item.getPrice());
+    public PaymentResult authorizeCash() {
+        return new CashPayment(amountInserted).authorize(slot.getItem().getPrice());
+    }
+
+    @Override
+    public State nextStateFor(PaymentResult result) {
         return switch (result) {
-            case PaymentResult.Approved approved -> {
-                slot.reduceQuantity();
-                yield new Transition<>(new IdleState(), new DispenseResult(item, approved.change()));
-            }
-            case PaymentResult.Declined declined -> throw new IllegalStateException(declined.reason());
+            case PaymentResult.Approved approved -> new IdleState();
+            /* the money stays in the machine: the customer can top up and try again */
+            case PaymentResult.Declined declined -> this;
         };
     }
 
     /**
-     * A card decline is an outcome, not a precondition violation, so it is
-     * returned rather than thrown - and the machine stays here, so the user can
-     * try another card instead of re-selecting their item.
+     * Phase 3b. Reached only by the thread that won the commit, which is why the
+     * quantity needs no lock and no atomic of its own.
      */
     @Override
-    public Transition<PurchaseResult> swipeCard(Card card, PaymentGateway gateway) {
+    public DispenseResult releaseItem(PaymentResult.Approved approved) {
         Item item = slot.getItem();
-        PaymentResult result = new CardPayment(card, gateway).authorize(item.getPrice());
-        return switch (result) {
-            case PaymentResult.Approved approved -> {
-                slot.reduceQuantity();
-                PurchaseResult dispensed =
-                        new PurchaseResult.Dispensed(item, approved.change(), approved.reference());
-                yield new Transition<>(new IdleState(), dispensed);
-            }
-            case PaymentResult.Declined declined ->
-                    new Transition<>(this, new PurchaseResult.Declined(declined.reason()));
-        };
+        slot.reduceQuantity();
+        return new DispenseResult(item, approved.change());
     }
 
     @Override

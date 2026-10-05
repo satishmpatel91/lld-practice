@@ -8,7 +8,7 @@ package com.vendingmachine.payment;
 public final class CardsNotAcceptedGateway implements PaymentGateway {
 
     @Override
-    public PaymentResult charge(Card card, int amount) {
+    public PaymentResult charge(Card card, int amount, String idempotencyKey) {
         return new PaymentResult.Declined("Card payments are not available.");
     }
 }

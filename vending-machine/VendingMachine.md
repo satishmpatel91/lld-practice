@@ -35,32 +35,35 @@ folder.
 
 ---
 
-## The design as it stands today (V3)
+## The design as it stands today (V4)
 
-Cash and card payments, two states, one authorization pipeline. 19 production classes,
-59 green tests. Two patterns are in it — **State** and **Strategy** — and each arrived
-only after a version without it had actually hurt.
+Cash and card payments, three states, one authorization pipeline, and safe for two
+people at once. 20 production classes, 67 green tests. Two patterns are in it —
+**State** and **Strategy** — and each arrived only after a version without it had
+actually hurt. V4 added no pattern at all; it changed *where side effects are allowed
+to happen*.
 
 ### The classes, and who owns what
 
 | Class | Responsibility |
 |---|---|
-| `VendingMachine` | the entry point; holds the current `State` and the injected `PaymentGateway`, fetches one `Transition` per call and applies it |
-| `State` | *interface.* Declares every operation with a **default that refuses it**; each state overrides only what it allows |
+| `VendingMachine` | the entry point; holds the current state in an `AtomicReference`, plus the injected `PaymentGateway` and `Clock`; runs each operation as claim → act → commit |
+| `State` | *interface.* Declares every operation with a **default that refuses it**; each state overrides only what it allows. Since V4 it is split by *phase* as well as by operation |
 | `IdleState` | nothing selected: allows `selectItem` and `cancel` (refunding zero) |
-| `ItemSelectedState` | a slot is chosen; carries the payload `slot` + `amountInserted`; allows `insertMoney`, `dispense`, `swipeCard`, `cancel` |
-| `Transition<T>` | *record.* What a state returns: the next state, plus the payload for this caller |
+| `ItemSelectedState` | a slot is chosen; carries the payload `slot` + `amountInserted`; allows `insertMoney`, `cancel`, cash authorization, and claiming a card payment |
+| `PaymentPendingState` | **the claim**: a card charge is in flight. Carries the payload plus `startedAt` and `attemptId`. Refuses everything except the card phases, because no other question can be answered until the gateway replies |
+| `Transition<T>` | *record.* What a state returns for a pure step: the next state, plus the payload for this caller |
 | `Inventory` | owns the slots; finds one by its code |
 | `Slot` | one physical position (`A1`): one kind of item and a count |
 | `Item` | a product: name and price |
 | `ItemView` | *record.* The read model the display gets — facts, no power to change stock |
-| `DispenseResult` | *record.* `(item, change)` — the cash path's success |
-| `PurchaseResult` | *sealed.* `Dispensed(item, change, reference)` or `Declined(reason)` — the card path, where failure is a legitimate answer |
+| `DispenseResult` | *record.* `(item, change)` — what releasing an item produces |
+| `PurchaseResult` | *sealed.* `Dispensed` / `Declined` / `Busy` — the card path, where both failure and "someone else is mid-purchase" are legitimate answers |
 | `PaymentMethod` | *interface.* `authorize(amount)` — the Strategy seam |
 | `CashPayment` | authorizes by comparing against the coins already inside; cannot fail outwardly |
-| `CardPayment` | authorizes by calling the gateway; may decline, may hang |
+| `CardPayment` | authorizes by calling the gateway, carrying the attempt's idempotency key; may decline, may hang |
 | `PaymentResult` | *sealed.* `Approved(change, reference)` or `Declined(reason)` |
-| `PaymentGateway` | *interface.* The boundary to somebody else's computer; declared by the domain, implemented outside it |
+| `PaymentGateway` | *interface.* The boundary to somebody else's computer; declared by the domain, implemented outside it. Takes an idempotency key, so a retried attempt moves money once |
 | `CardsNotAcceptedGateway` | *null object* for a machine with no card reader — declines politely instead of throwing |
 | `Card` | holds a gateway **token**, never a card number |
 | `PaymentGatewayException` | thrown when the outcome is genuinely **unknown** (timeout, unreachable) |
@@ -72,13 +75,16 @@ classDiagram
     class VendingMachine {
         -Inventory inventory
         -PaymentGateway paymentGateway
-        -State state
+        -Clock clock
+        -AtomicReference~State~ state
         +showItems() List~ItemView~
         +selectItem(String code) void
         +insertMoney(int amount) void
         +dispense() DispenseResult
         +swipeCard(Card card) PurchaseResult
         +cancel() int
+        -expireStaleClaim() void
+        -orphaned(PaymentResult charged) PurchaseResult
     }
 
     class State {
@@ -86,9 +92,13 @@ classDiagram
         +deniedMessage() String
         +selectItem(String code, Inventory inventory) Transition~Void~
         +insertMoney(int amount) Transition~Void~
-        +dispense() Transition~DispenseResult~
-        +swipeCard(Card card, PaymentGateway gateway) Transition~PurchaseResult~
         +cancel() Transition~Integer~
+        +beginCardPayment(Card card, Instant startedAt, String attemptId) Transition~Void~
+        +authorizeCash() PaymentResult
+        +authorizeCard(PaymentGateway gateway) PaymentResult
+        +nextStateFor(PaymentResult result) State
+        +releaseItem(Approved approved) DispenseResult
+        +isExpired(Instant now, Duration timeout) boolean
     }
 
     class IdleState {
@@ -100,9 +110,24 @@ classDiagram
         -Slot slot
         -int amountInserted
         +insertMoney(int amount) Transition~Void~
-        +dispense() Transition~DispenseResult~
-        +swipeCard(Card card, PaymentGateway gateway) Transition~PurchaseResult~
+        +beginCardPayment(Card card, Instant startedAt, String attemptId) Transition~Void~
+        +authorizeCash() PaymentResult
+        +nextStateFor(PaymentResult result) State
+        +releaseItem(Approved approved) DispenseResult
         +cancel() Transition~Integer~
+    }
+
+    class PaymentPendingState {
+        -Slot slot
+        -int amountInserted
+        -Card card
+        -Instant startedAt
+        -String attemptId
+        +authorizeCard(PaymentGateway gateway) PaymentResult
+        +nextStateFor(PaymentResult result) State
+        +releaseItem(Approved approved) DispenseResult
+        +isExpired(Instant now, Duration timeout) boolean
+        +attemptId() String
     }
 
     class Transition~T~ {
@@ -150,6 +175,7 @@ classDiagram
         <<sealed>>
         Dispensed(Item item, int change, String reference)
         Declined(String reason)
+        Busy(String reason)
     }
 
     class PaymentMethod {
@@ -164,15 +190,16 @@ classDiagram
     class CardPayment {
         -Card card
         -PaymentGateway gateway
+        -String idempotencyKey
     }
 
     class PaymentGateway {
         <<interface>>
-        +charge(Card card, int amount) PaymentResult
+        +charge(Card card, int amount, String idempotencyKey) PaymentResult
     }
 
     class CardsNotAcceptedGateway {
-        +charge(Card card, int amount) PaymentResult
+        +charge(Card card, int amount, String idempotencyKey) PaymentResult
     }
 
     class PaymentResult {
@@ -183,24 +210,27 @@ classDiagram
 
     State <|.. IdleState : implements
     State <|.. ItemSelectedState : implements
+    State <|.. PaymentPendingState : implements
     PaymentMethod <|.. CashPayment : implements
     PaymentMethod <|.. CardPayment : implements
     PaymentGateway <|.. CardsNotAcceptedGateway : implements
 
-    VendingMachine o-- State : current
+    VendingMachine o-- State : atomic reference
     VendingMachine *-- Inventory : owns
     VendingMachine --> PaymentGateway : injected
+    VendingMachine --> Clock : injected
     VendingMachine ..> Transition : reads
     VendingMachine ..> ItemView : shows
+    VendingMachine ..> PurchaseResult : returns
     State ..> Transition : returns
     Inventory "1" *-- "0..*" Slot : owns
     Slot --> Item : holds
     ItemView ..> Slot : projected from
     ItemSelectedState --> Slot : payload
-    ItemSelectedState ..> CashPayment : dispense
-    ItemSelectedState ..> CardPayment : swipeCard
-    ItemSelectedState ..> DispenseResult : returns
-    ItemSelectedState ..> PurchaseResult : returns
+    ItemSelectedState ..> CashPayment : authorizeCash
+    ItemSelectedState ..> PaymentPendingState : claim
+    PaymentPendingState --> Card : claim payload
+    PaymentPendingState ..> CardPayment : authorizeCard
     CardPayment --> PaymentGateway : delegates
     PaymentMethod ..> PaymentResult : returns
 ```
@@ -213,53 +243,74 @@ stateDiagram-v2
     IdleState --> ItemSelectedState : selectItem(code) — exists, in stock
     IdleState --> IdleState : cancel() — refunds 0
     ItemSelectedState --> ItemSelectedState : insertMoney(amount)
-    ItemSelectedState --> ItemSelectedState : swipeCard — Declined (keep the selection)
-    ItemSelectedState --> IdleState : dispense() — cash authorized
-    ItemSelectedState --> IdleState : swipeCard() — card approved
+    ItemSelectedState --> IdleState : dispense() — cash authorized, commit won
     ItemSelectedState --> IdleState : cancel() — refunds what was inserted
+    ItemSelectedState --> PaymentPendingState : claim by CAS — lose it and get Busy
+    PaymentPendingState --> IdleState : approved, commit won, item released
+    PaymentPendingState --> ItemSelectedState : declined — cash kept, try another card
+    PaymentPendingState --> PaymentPendingState : gateway hung — claim deliberately held
+    PaymentPendingState --> IdleState : claim stale — taken over by the next request
 ```
 
 Every operation not drawn here is **refused by the interface's own default**, with no
-check written anywhere. `insertMoney` in `IdleState`, `dispense` with nothing selected,
-`swipeCard` before selecting: all land on `State`'s default and throw
-`IllegalStateException(deniedMessage())`.
+check written anywhere. `insertMoney` in `IdleState`, cash with nothing selected,
+`swipeCard` before selecting, and anything at all while a charge is in flight: all land
+on `State`'s default and throw `IllegalStateException(deniedMessage())`.
 
 ### Both payment paths, as built
 
 Cash and card fork **only** at the point of choosing a method. Everything downstream of
-`authorize` is identical and knows nothing about how the customer paid.
+`authorize` is identical and knows nothing about how the customer paid. Since V4 every
+purchase runs in three phases, and only the pure ones are ever retried.
 
 ```
 cash
   selectItem("A1"); insertMoney(10); insertMoney(20)
   dispense()   -> CashPayment(30).authorize(25) -> Approved(change 5, "CASH")
-               -> stock reduced, DispenseResult(Coke, 5), state = IdleState
+               -> commit CAS -> IdleState, then releaseItem: stock 3 -> 2
+               -> DispenseResult(Coke, 5)
 
 card approved
   selectItem("B1"); swipeCard(token)
-               -> CardPayment.authorize(15) -> gateway -> Approved(0, "AUTH-1")
-               -> stock reduced, Dispensed(Water, 0, "AUTH-1"), state = IdleState
+               -> claim: CAS ITEM_SELECTED -> PAYMENT_PENDING
+               -> authorizeCard -> gateway(key=attemptId) -> Approved(0, "AUTH-1")
+               -> commit CAS -> IdleState, then releaseItem
+               -> Dispensed(Water, 0, "AUTH-1")
 
 card declined
   swipeCard(token) -> Declined("Card declined by issuer.")
-               -> stock unchanged, state stays ItemSelectedState
+               -> commit returns to ItemSelectedState with the cash intact
                -> a second card, or cash, can still finish the sale
+
+two customers, one Coke, both swipe
+  A claims, B's CAS fails -> Busy("Another purchase is in progress.")
+               -> B was never charged, so there is nothing to undo
 
 no card reader
   swipeCard(token) -> Declined("Card payments are not available.")
 
 gateway failure
   swipeCard(token) -> PaymentGatewayException thrown upwards
-               -> state never changed, so the selection and any cash survive
+               -> the claim is KEPT on purpose: nobody else may buy an item we
+                  may already have been paid for. cancel() and selectItem() are
+                  refused until the 30s timeout lets the next request take over
+
+the charge returns too late
+  A's commit CAS fails, because the claim was expired and taken over
+               -> orphaned(): money moved, no item, a refund is owed
+               -> and there is nowhere yet to write that down
 ```
 
-Two rules hold that together:
+Three rules hold that together:
 
 > **Exceptions** for "you cannot do that" and "the system is broken".
 > **Return values** for "we tried, and the answer is no."
 
 > Charge first, dispense second. Owing a refund is recoverable; an item that has
 > physically dropped into the tray is not.
+
+> A compare-and-set retry loop is only safe when the step it recomputes is **pure**.
+> A retried charge is a second charge.
 
 ### Where each requirement ended up
 
@@ -270,18 +321,24 @@ Two rules hold that together:
 | Put money in | `ItemSelectedState.insertMoney`, accumulated in the state's own payload |
 | Rules about order | `State`'s refusing defaults — deny by default, nothing to forget |
 | Pay by cash or card | `PaymentMethod` + `CashPayment` / `CardPayment` |
-| A payment that can fail | `PaymentResult` / `PurchaseResult`, sealed so the compiler demands both branches |
-| An outcome nobody knows | `PaymentGatewayException`, thrown with the state left untouched |
+| A payment that can fail | `PaymentResult` / `PurchaseResult`, sealed so the compiler demands every branch |
+| An outcome nobody knows | `PaymentGatewayException`, thrown with the claim left in place |
 | A machine with no card reader | `CardsNotAcceptedGateway` |
 | Talking to a bank | `PaymentGateway` — declared here, implemented outside |
+| Two people at once | `AtomicReference<State>` plus claim → act → commit; losing the claim returns `Busy` |
+| A charge in flight | `PaymentPendingState`, which is the claim itself |
+| A retried charge | the `attemptId` idempotency key, carried by `CardPayment` |
+| Stock that cannot be oversold | only the commit winner reaches `releaseItem`, so `quantity` needs no lock |
+| Time | an injected `Clock`, so the expiry test moves a clock instead of sleeping |
 
 ### What is deliberately **not** here
 
 Individual coin denominations and the machine's own coin float; real change-making that
-can fail; refills, price changes, cash collection and sales reports; a transaction log;
-idempotent retries; two users at once; and the `PaymentPendingState` that covers a
-charge in flight. Each is named in the version that refused it, with the condition that
-would make it earn its place — see **V4** and **V5** under *Still to come*.
+can fail; refills, price changes, cash collection and sales reports; a transaction log,
+which both of V4's `TODO(V5)` markers are asking for; a background sweeper so monitoring
+can see a machine stuck in `PAYMENT_PENDING`; and a configurable timeout instead of a
+30-second constant in code. Each is named in the version that refused it, with the
+condition that would make it earn its place — see **V5** under *Still to come*.
 
 ---
 
@@ -298,6 +355,7 @@ version without it failed in a specific, nameable way.
 | **V2b** | the rules were unreadable and scattered | the allowed operations written **as data** on each state | a state cannot own the data that only makes sense in it |
 | **V2c** | a state needed behaviour *and* its own payload | the **State pattern**: `State` + `IdleState` + `ItemSelectedState`, `Transition`, refusing defaults | dependencies get threaded through `State`'s signatures, which churn |
 | **V3** | only one way to pay | the **Strategy pattern**: `PaymentMethod`, the `PaymentGateway` boundary, sealed results | a failed charge is unreconciled; no idempotency; the in-flight window is real but unmodelled |
+| **V4** | two threads could both sell the last item, and both overwrite the machine's state | `AtomicReference<State>`, the claim → act → commit split, `PaymentPendingState`, `Busy`, an idempotency key, an injected `Clock` | nothing is recorded: an orphaned charge and an expired claim both owe the customer money with nowhere to write it down |
 
 Read them in that order. Each section opens with the problem it inherited and closes
 with the problem it created, which is the one the next version exists to solve.
@@ -1671,12 +1729,379 @@ stock check before either reduces the stock.** That is V4.
 
 ---
 
+## V4 — Two people at once
+
+### The new requirement
+
+Until now one person used the machine at a time. Now two requests arrive
+together: a networked machine with two request threads, two tablets hitting one
+service, or simply a double-pressed button.
+
+Nothing in V1-V3 was built for that, and the design has **two separate races**.
+
+### Race one: the stock
+
+```java
+public void reduceQuantity() {
+    if (quantity <= 0) { throw ...; }
+    quantity--;
+}
+```
+
+Two threads both read `quantity = 1`, both pass the guard, and both decrement.
+The outcome is worse than it first looks:
+
+- `quantity--` is **not one operation**. It is read, subtract, write. So the two
+  decrements can interleave *inside* the write and both store `0` - a **lost
+  update**.
+- `0` is more dangerous than `-1`. A negative count is visibly impossible, so
+  someone reading it knows something broke. `0` looks perfectly normal: two
+  customers got a can, the machine believes it sold one, and the only evidence
+  is a missing can at refill time.
+
+**The guard does not help, and the reason matters.** `if (quantity <= 0) throw`
+is a *sequential* invariant check. It catches one thread calling
+`reduceQuantity()` once too often - a bug on a single thread. Under two threads
+both pass it before either writes.
+
+### Race two: the machine's own state, which is worse
+
+```java
+private State state = new IdleState();
+```
+
+Both threads read the same reference, so both hold the **same
+`ItemSelectedState` instance** - the one carrying `(slot = A1, amountInserted =
+25)`. So both authorize against the *same* money, both dispense, and both then
+assign `state = new IdleState()`.
+
+Two distinct failures from one field:
+
+- **Lost update.** `state = state.dispense().next()` is read-compute-write. The
+  second assignment wins and the first customer's transaction disappears from
+  the machine's point of view.
+- **Visibility.** Without `volatile` or an atomic, there is no guarantee thread
+  B ever *sees* A's write. B can keep operating on a stale state indefinitely -
+  no exception, no symptom, just a machine holding two different ideas of what
+  it is doing.
+
+### What V2c's immutability did and did not buy
+
+It guarantees nobody sees a **half-updated** state: the object never changes, so
+there is no torn read. It does **not** make the swap atomic.
+
+> Immutability made an atomic transition *possible*. It did not perform one.
+
+### The fix, and the trap inside it
+
+`AtomicReference<State>` closes both holes in race two at once - the lost update
+and the visibility gap.
+
+The trap is in how compare-and-set is normally written. The textbook shape is a
+**retry loop**:
+
+```java
+while (true) {
+    State current = state.get();
+    Transition<T> next = current.dispense();          // compute
+    if (state.compareAndSet(current, next.next())) {  // publish
+        return next.payload();
+    }
+    // lost the race - go round again
+}
+```
+
+That is correct and idiomatic for an atomic counter. Here it is catastrophic:
+`current.dispense()` **charges a card and reduces stock** before the CAS is even
+attempted, so going round again charges the customer a second time.
+
+> A CAS retry loop is only safe when the step it recomputes is **pure**.
+
+So the fix is not "CAS harder". It is to split every purchase into phases and
+only ever CAS a pure one:
+
+| Phase | What happens | Why it is safe |
+|---|---|---|
+| **1 claim** | pure state swap, by CAS | lose it and nothing happened, so nothing needs undoing |
+| **2 act** | charge the gateway | the caller holds no lock, so a hung gateway cannot freeze the machine |
+| **3 commit** | pure CAS, then release the item | only the commit winner touches stock |
+
+### `PaymentPendingState` finally earns its place
+
+V3 refused to add it: with a blocking call and one thread, no caller could ever
+observe it. Now it is the **claim** - the marker that says *someone has won the
+right to charge, and the charge is in flight*. It carries the slot, the money,
+the card, `startedAt`, and an `attemptId`.
+
+It overrides only the card phases, so by deny-by-default it refuses selection,
+cash and cancellation while a charge is out - which is exactly right, because
+none of those questions can be answered until the gateway replies.
+
+### The stock race disappears without locking the stock
+
+If only one thread can hold the in-flight transaction, then only that thread
+ever reaches `releaseItem()`, so `quantity--` has no competitor. No
+`AtomicInteger`, no lock on the slot.
+
+This is the same move as the parking lot's `claimFreeSpot`: rather than guarding
+the gap between finding and taking, **remove the gap** so there is nothing to
+race in.
+
+### A correction worth recording
+
+The first version of this put `slot.reduceQuantity()` inside phase 2, right
+after the charge. That is wrong, and the reason is subtle: if the claim expired
+while the charge was in flight, another customer may already have bought that
+can, so reducing stock before knowing the claim still holds can take one can
+twice.
+
+**Stock moves only after the commit CAS is won.** That is why the pending state
+has three methods rather than one:
+
+```
+authorizeCard(gateway)   phase 2   blocks on the network, changes nothing
+nextStateFor(result)     phase 3a  pure
+releaseItem(approved)    phase 3b  side effect, legal only for the commit winner
+```
+
+`ItemSelectedState` implements the same three for cash, where `authorizeCash()`
+is a local comparison. Both tenders share one shape, so `VendingMachine` needs
+no `instanceof` and no casts, and the phases are `default`-throwing on `State`,
+so deny-by-default still covers them.
+
+### Busy is a third outcome, not a kind of decline
+
+Losing the claim must not retry, so it returns. `PurchaseResult` gains a case:
+
+```java
+public sealed interface PurchaseResult
+        permits Dispensed, Declined, Busy { ... }
+```
+
+Why a third case rather than `Declined("someone else is mid-purchase")`: a
+declined **card** should not be retried with the same card, while **busy**
+should be retried in two seconds. Same type, opposite advice. Adding the case
+makes every `switch` in the codebase fail to compile until it is handled - the
+sealed-interface payoff built in V3 and collected here.
+
+### A hung gateway, and who clears up
+
+A `PaymentGatewayException` propagates and the claim is deliberately **kept**.
+Releasing it would let a second customer buy an item we may already have been
+paid for.
+
+`PaymentPendingState` carries `startedAt`, and `Clock` is injected into
+`VendingMachine` - the same reason the parking lot injects one: the expiry test
+advances a fake clock instead of sleeping for thirty seconds.
+
+**Lazy expiry** was chosen over a background sweeper: the next request notices
+the claim is stale and takes it over. The cost is that a stuck machine stays
+stuck until somebody walks up to it - acceptable for a physical machine, since
+nobody is inconvenienced by a machine nobody is using. A sweeper is still worth
+adding later, not for correctness but so monitoring can *see* a machine sitting
+in `PAYMENT_PENDING` for an hour.
+
+### Charge-first survives, for a new reason
+
+V3 chose charge-then-dispense because owing a refund is recoverable while a
+vanished item is not. Under concurrency that ordering pays again: a hang leaves
+**stock untouched and money possibly taken**, so the takeover has nothing to
+repair, only a note to write. Reverse the order and the takeover must restore
+stock *as well as* write the note - more to get wrong, on the path that is
+already least tested.
+
+### Idempotency
+
+The charge now takes a key:
+
+```java
+PaymentResult charge(Card card, int amount, String idempotencyKey);
+```
+
+The key identifies the **attempt**, not the card, so it is held by the
+`CardPayment` instance and `PaymentMethod.authorize(int)` stays unchanged -
+cash is untouched. `FakePaymentGateway` behaves like a real gateway: a key it
+has already answered returns the stored answer and moves no money. That split
+`chargeCount()` (money movements) from `callCount()` (calls), which is what lets
+a test assert "asked twice, charged once".
+
+### Class diagram
+
+```mermaid
+classDiagram
+    class VendingMachine {
+        -Inventory inventory
+        -PaymentGateway paymentGateway
+        -Clock clock
+        -AtomicReference~State~ state
+        +selectItem(String code) void
+        +insertMoney(int amount) void
+        +dispense() DispenseResult
+        +swipeCard(Card card) PurchaseResult
+        +cancel() int
+        -expireStaleClaim() void
+        -orphaned(PaymentResult charged) PurchaseResult
+    }
+
+    class State {
+        <<interface>>
+        +deniedMessage() String
+        +beginCardPayment(Card card, Instant startedAt, String attemptId) Transition~Void~
+        +authorizeCash() PaymentResult
+        +authorizeCard(PaymentGateway gateway) PaymentResult
+        +nextStateFor(PaymentResult result) State
+        +releaseItem(Approved approved) DispenseResult
+        +isExpired(Instant now, Duration timeout) boolean
+    }
+
+    class ItemSelectedState {
+        -Slot slot
+        -int amountInserted
+    }
+
+    class PaymentPendingState {
+        -Slot slot
+        -int amountInserted
+        -Card card
+        -Instant startedAt
+        -String attemptId
+        +attemptId() String
+    }
+
+    class PurchaseResult {
+        <<sealed>>
+        Dispensed(Item item, int change, String reference)
+        Declined(String reason)
+        Busy(String reason)
+    }
+
+    State <|.. IdleState : implements
+    State <|.. ItemSelectedState : implements
+    State <|.. PaymentPendingState : implements
+    VendingMachine o-- State : atomic reference
+    VendingMachine --> Clock : injected
+    PaymentPendingState --> Card : claim payload
+    VendingMachine ..> PurchaseResult : returns
+```
+
+### The states, and the phases between them
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> ITEM_SELECTED : selectItem (pure, retryable)
+    ITEM_SELECTED --> ITEM_SELECTED : insertMoney (pure, retryable)
+    ITEM_SELECTED --> IDLE : cancel, or cash dispense commits
+    ITEM_SELECTED --> PAYMENT_PENDING : claim by CAS. Lose it, get Busy
+    PAYMENT_PENDING --> IDLE : charge approved, commit won, item released
+    PAYMENT_PENDING --> ITEM_SELECTED : declined, cash kept, try another card
+    PAYMENT_PENDING --> PAYMENT_PENDING : gateway hung, claim deliberately held
+    PAYMENT_PENDING --> IDLE : claim stale, taken over by the next request
+```
+
+### Flows
+
+```
+two customers, one Coke, both swipe
+  A: beginCardPayment -> CAS ITEM_SELECTED -> PAYMENT_PENDING   won
+  B: beginCardPayment -> CAS fails                              Busy, nothing charged
+  A: authorizeCard -> Approved -> CAS PENDING -> IDLE           won
+  A: releaseItem -> stock 1 -> 0                                one can, one charge
+
+the gateway hangs
+  A: claim won, authorizeCard throws PaymentGatewayException
+     the exception propagates, the claim STAYS
+  B: anything -> "A payment is already in progress."
+  ...30 seconds...
+  B: expireStaleClaim -> CAS PENDING -> IDLE, B proceeds
+     TODO(V5): the abandoned attempt is not recorded anywhere
+
+the charge comes back too late
+  A: claim won, charge in flight
+  B: expires A's claim, buys the can
+  A: charge returns Approved -> commit CAS FAILS (the claim is gone)
+     -> orphaned(): money moved, no item, refund owed
+     TODO(V5): nowhere to write that down
+```
+
+### Two behaviour changes this version forces
+
+**`cancel()` is refused while a charge is unresolved.** The claim is held, so
+the customer cannot take their cash back until the timeout clears it. Harsh,
+and correct: until the gateway answers, nobody knows whether their card was
+charged.
+
+**A decline moves no money**, so a test counting declines must count *calls*,
+not charges.
+
+### Tests
+
+67 green, four of them new and about properties only concurrency can break.
+Each releases 16 threads from one latch so they genuinely overlap:
+
+| Test | Property |
+|---|---|
+| `onlyOneThreadCanBuyTheLastItemByCard` | exactly 1 `Dispensed`, 15 `Busy`, `chargeCount() == 1`, stock 0 and never negative |
+| `concurrentCashDispensesHandOverOneItem` | a double-pressed button dispenses once |
+| `noCoinIsLostWhenInsertingConcurrently` | 16 inserts of 10 all survive the retry loop - a lost update here quietly keeps the customer's money |
+| `sellsExactlyItsStock` | threads buy in a loop until sold out; every can sold exactly once |
+
+Plus expiry tests that move an injected clock rather than sleeping, and one
+named `expiryCurrentlyForgetsInsertedCash`, which **documents a gap rather than
+hiding it**.
+
+Proof the tests bite: reverting `dispense()` to V3's plain assignment gives
+
+```
+concurrentCashDispensesHandOverOneItem:94
+  a double-pressed button must not dispense twice ==> expected: <1> but was: <2>
+```
+
+### What changed, and why
+
+| | V3 | V4 |
+|---|---|---|
+| State field | plain field | `AtomicReference<State>` |
+| Lost update on the swap | possible | impossible |
+| Visibility across threads | not guaranteed | guaranteed by the atomic |
+| Two threads, one item | two charges, one can | one charge, one can, the other told `Busy` |
+| Stock safety | none | needs no lock - only the commit winner touches it |
+| A purchase | one step | claim, act, commit |
+| Retried charge | charges twice | idempotency key, charges once |
+| Hung gateway | state unchanged by accident | claim held on purpose, cleared by timeout |
+| Time | nowhere | injected `Clock` |
+
+**No design pattern was added in V4.** What changed is *where side effects are
+allowed to happen* - which is worth saying in an interview, because the instinct
+under "make it thread-safe" is to reach for a pattern or wrap everything in
+`synchronized`.
+
+### Problems with V4
+
+**Nothing is recorded.** Both `TODO(V5)` markers are the same missing thing: a
+transaction log. An orphaned charge means a refund is owed, and expiring a claim
+also discards the record of cash the customer physically inserted. The machine
+knows it may owe money and has nowhere to write it.
+
+**`State` is accreting phase methods.** Seven methods now, several of which only
+one state implements. Interface Segregation says this wants splitting.
+
+**Lazy expiry alone cannot alert.** A machine stuck in `PAYMENT_PENDING`
+overnight goes unnoticed until someone arrives.
+
+**The timeout is a constant.** 30 seconds is a guess, in code, the same for
+every machine on every network.
+
+**Still no coin float.** V1's assumption - change is a number and the float is
+infinite - has survived four versions and is V5's main business requirement.
+
+---
+
 ## Still to come
 
 | Version | What it adds |
 |---|---|
-| **V4** | concurrency: two users at once, race conditions, idempotency, and the `PaymentPendingState` that V3 refused to add early |
-| **V5** | production concerns: the coin float and real change-making, refills, a transaction log, failure recovery, logging and metrics, configuration |
+| **V5** | production concerns: the coin float and real change-making, a transaction log for the two debts V4 cannot record, refills and price changes, a background sweeper so monitoring can see a stuck claim, a configurable timeout, logging and metrics |
 
 ---
 
@@ -1706,6 +2131,26 @@ results in it being refused, rather than being allowed.
 
 **Idempotent** — an operation that has the same effect whether you do it once or
 five times. Crucial for payments: a retried charge must not take money twice.
+
+**Compare-and-set (CAS)** — "change this value to B, but only if it is still A."
+One indivisible machine instruction, so no other thread can slip in between the
+check and the change. It returns whether it *won*, not whether the value was
+already B.
+
+**Lost update** — two threads read the same value, both compute from it, and
+both write. The second write erases the first, and nothing reports an error.
+
+**Visibility** — whether one thread can see another thread's writes at all.
+Without `volatile` or an atomic, it is not guaranteed, so a thread can keep
+reading a stale value indefinitely.
+
+**Claim** — a state that marks "this thread has won the right to do the
+irreversible thing". `PaymentPendingState` is one. Taking the claim is cheap and
+reversible; what follows it is not.
+
+**Lazy expiry** — noticing a stale claim on the *next* request rather than with a
+background timer. Simpler and testable, but it cannot raise an alarm while
+nobody is using the machine.
 
 ### SOLID, briefly
 
@@ -1737,6 +2182,7 @@ bank's SDK.
 | **Null Object** | V3 | a machine with no card reader, without null checks or crashes |
 | **Value Object / record** | V1, V3 | returning several facts at once (`DispenseResult`, `ItemView`, `Transition`, `PaymentResult`) |
 | **Read model / DTO** | V1 | the display needed facts without the power to change stock (`ItemView`) |
+| **(no pattern)** | V4 | thread safety needed no pattern - it needed side effects moved out of the retryable step, which is why the claim is pure and the charge is not |
 
 Patterns **considered and rejected**, which matters just as much:
 
@@ -1753,8 +2199,11 @@ accepts nonsense, and that the fix is seven scattered `if`s. Give the state a
 name, and calculate it rather than storing it, so it cannot contradict the data.
 Write the rules down as data on the state, so a human can read them. Then turn
 each state into a class, so a state can own its behaviour *and* its data — which
-makes forgotten checks impossible and money-leaking inexpressible. Finally, add
+makes forgotten checks impossible and money-leaking inexpressible. Then add
 a second way to pay behind one interface, treat cash as the boring case of the
 general rule, and separate "the answer is no" (a return value) from "something
-is broken" (an exception). At every step, the next pattern was only allowed in
-once the previous version had actually hurt.
+is broken" (an exception). Finally, let two people use it at once: hold the state
+in an atomic reference, split each purchase into a pure claim, an irreversible
+act and a pure commit, and never retry the middle one - because a retried charge
+is a second charge. At every step, the next pattern was only allowed in once the
+previous version had actually hurt; V4 needed no pattern at all.

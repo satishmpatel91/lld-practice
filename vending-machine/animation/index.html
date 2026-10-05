@@ -453,16 +453,20 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
 
 <section class="block">
   <div class="sechd">
-    <p class="eyebrow">V4 — the problem, not yet the fix</p>
+    <p class="eyebrow">V4 — the race, and the fix</p>
     <h2>Two people, one Coke</h2>
     <p>
-      Every version above assumes one user at a time. A card charge takes a few hundred
+      Every version up to V3 assumed one user at a time. A card charge takes a few hundred
       milliseconds, and during that wait a second person can press DISPENSE. Watch where the two
-      runs cross.
+      runs cross — then switch to the V4 shape and watch what changes.
     </p>
   </div>
   <div class="card">
     <div class="bd" style="display:grid; gap:14px;">
+      <div class="seq">
+        <button class="chip on" id="raceOld">V3: one step, read then write</button>
+        <button class="chip" id="raceNew">V4: claim, act, commit</button>
+      </div>
       <div class="race">
         <div class="lane">
           <span class="who">thread A</span>
@@ -478,11 +482,13 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
         <button class="btn" id="racePlay">Run both threads</button>
         <button class="btn ghost" id="raceReset">Reset</button>
       </div>
+      <div class="code" id="raceCode"></div>
       <p style="color:var(--ink-dim); font-size:13px; max-width:66ch;">
-        Both threads read <code style="font-family:var(--font-mono)">quantity = 1</code> before either
-        writes <code style="font-family:var(--font-mono)">quantity = 0</code>. Two cards are charged,
-        one Coke exists. Immutable states make the fix possible: a transition is a single reference
-        swap, so it can become one atomic compare-and-set instead of a read followed by a write.
+        The fix is not a lock around everything. A compare-and-set <em>retry loop</em> would be
+        worse than useless here, because the step it recomputes charges a card — going round
+        again charges the customer twice. So the purchase splits into a pure claim, the
+        irreversible act, and a pure commit. Immutable states are what make the claim one atomic
+        reference swap.
       </p>
     </div>
   </div>
@@ -601,16 +607,33 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
       ]
     },
     {
-      id: "V4", name: "Concurrency", tag: "not built yet", future: true,
-      title: "V4 — two people at once",
-      guards: true, card: true, payload: true, pending: true,
+      id: "V4", name: "Two at once", tag: "claim, act, commit",
+      title: "V4 \u2014 two people at once",
+      guards: true, card: true, payload: true, pending: true, claim: true,
       guardCount: 0, guardLabel: "0 checks written",
-      guardNote: "Not implemented yet. This is where PAYMENT_PENDING finally earns the place V3 refused it, because a second caller must be turned away while the first charge is in flight.",
-      snippet: "<span class='c'>// the race, in two lines</span>\nif (slot.qty &gt; 0)   <span class='r'>// A reads 1, B reads 1</span>\n  slot.reduce();   <span class='r'>// both write 0</span>\n\n<span class='g'>// immutable state => one atomic swap</span>",
+      guardNote: "A purchase is now three phases: a pure claim by compare-and-set, the irreversible act, then a pure commit. Only the claim is ever retried.",
+      snippet: "<span class='r'>// a retry loop recomputes the step -</span>\n<span class='r'>// and the step charges a card</span>\nwhile (true) { ... current.dispense() ... }\n\n<span class='g'>// so: claim (pure) -> act -> commit (pure)</span>\n<span class='g'>CAS(ITEM_SELECTED -> PAYMENT_PENDING)</span>",
       notes: [
-        ["broke", "!", "Both threads pass the stock check", "Each reads quantity = 1 before either writes 0. Two charges, one Coke."],
-        ["cost", "~", "PAYMENT_PENDING now earns it", "The machine genuinely rests there, waiting for someone else's answer."],
-        ["won", "+", "Immutability pays off", "A transition is one reference swap, so it can become one atomic compare-and-set."]
+        ["won", "+", "AtomicReference closes two holes", "The lost update when both threads read the same state and both assign, and the visibility gap where one never sees the other's write at all."],
+        ["won", "+", "PAYMENT_PENDING earns its place", "V3 refused it because nobody could observe it. Now it is the claim: whoever is in it has won the right to charge."],
+        ["won", "+", "Stock needs no lock", "Only the commit winner reaches releaseItem, so quantity has no competitor. The gap was removed rather than guarded."],
+        ["won", "+", "A retry cannot double-charge", "The charge carries the attempt id as an idempotency key. Asked twice, money moves once."],
+        ["cost", "~", "Cancel is refused mid-charge", "Until the gateway answers, nobody knows if the card was charged, so the claim is held and the cash is stuck until the timeout."],
+        ["broke", "!", "Nothing is recorded", "An abandoned claim and a charge that lands too late both owe the customer money, and there is nowhere to write that down."]
+      ]
+    },
+    {
+      id: "V5", name: "Production", tag: "not built yet", future: true,
+      title: "V5 \u2014 production concerns",
+      guards: true, card: true, payload: true, pending: true, claim: true,
+      guardCount: 0, guardLabel: "0 checks written",
+      guardNote: "Not implemented. This is where the coin float, the transaction log, refills and configuration arrive.",
+      snippet: "<span class='c'>// V1 assumed the float was infinite.</span>\n<span class='c'>// Four versions later it still does.</span>\n\n<span class='c'>// change can fail even when the</span>\n<span class='c'>// customer paid enough</span>",
+      notes: [
+        ["broke", "!", "Change is still a number", "V1's stated assumption has survived four versions. A real coin float means change can fail even when enough was paid."],
+        ["broke", "!", "No transaction log", "Both of V4's TODOs are the same missing thing: somewhere to record money the machine knows it may owe."],
+        ["cost", "~", "No operator at all", "Refills, price changes, cash collection and sales reports have never existed."],
+        ["cost", "~", "The timeout is a constant", "30 seconds, in code, the same for every machine on every network."]
       ]
     }
   ];
@@ -626,6 +649,7 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
   /* ---------- machine state ---------- */
   var cur = VERSIONS[0];
   var gw = "APPROVE";
+  var raceMode = "old";
   var S = { state: "IDLE", slot: null, credit: 0 };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -700,6 +724,7 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
     }
     $("bCard").disabled = !cur.card;
     $("gwRow").hidden = !cur.card;
+    $("claimRow").hidden = !cur.claim;
   }
 
   function renderKeys() {
@@ -724,6 +749,7 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
   /* ---------- operations ---------- */
   function allowed(op) {
     if (!cur.guards) { return true; }
+    if (S.state === "PAYMENT_PENDING") { return false; }   /* the claim refuses everything */
     if (op === "SELECT_ITEM") { return S.state === "IDLE"; }
     if (op === "INSERT_MONEY" || op === "DISPENSE" || op === "SWIPE") { return S.state === "ITEM_SELECTED"; }
     return true;
@@ -825,30 +851,82 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
 
   function opCard() {
     if (!cur.card) { return; }
-    if (!allowed("SWIPE")) {
-      deny("No item selected.");
-      log("k", "the swipe never reached the gateway — chargeCount stays 0");
+
+    /* V4: a second swipe while a charge is in flight loses the claim */
+    if (cur.claim && S.state === "PAYMENT_PENDING") {
+      say("Another purchase is in progress.", "warn");
+      log("wn", "Busy(\"Another purchase is in progress.\") \u2014 returned, not thrown");
+      log("k", "this customer was never charged, so there is nothing to undo");
       return;
     }
+    if (!allowed("SWIPE")) {
+      deny(S.state === "PAYMENT_PENDING" ? "A payment is already in progress." : "No item selected.");
+      log("k", "the swipe never reached the gateway \u2014 chargeCount stays 0");
+      return;
+    }
+
     var s = inv[S.slot];
-    log("k", "CardPayment.authorize(" + s.price + ") → gateway …");
+
+    if (cur.claim) {
+      S.state = "PAYMENT_PENDING";
+      renderDisplay(); paintDiagram();
+      log("ok", "phase 1 \u2014 claim: CAS ITEM_SELECTED \u2192 PAYMENT_PENDING, won");
+      log("k", "pure: nothing charged yet, so losing this costs nothing");
+    }
+    log("k", "phase 2 \u2014 CardPayment.authorize(" + s.price + "), key = attempt id \u2026");
+
     if (gw === "APPROVE") {
+      if (cur.claim) { log("ok", "phase 3 \u2014 commit: CAS PAYMENT_PENDING \u2192 IDLE, won"); }
+      S.state = "ITEM_SELECTED";
       dropItem(s.name, 0, "Approved(0, \"AUTH-1\")");
-      log("k", "a card is charged the exact price, so change is structurally impossible");
+      log("k", cur.claim ? "only the commit winner reaches releaseItem, so stock needs no lock"
+                         : "a card is charged the exact price, so change is structurally impossible");
       return;
     }
     if (gw === "DECLINE") {
+      S.state = "ITEM_SELECTED";
       say("Card declined. Try another, or pay cash.", "warn");
-      log("wn", "Declined(\"Card declined by issuer.\") → returned, not thrown");
-      log("k", "state stays ITEM_SELECTED, so the selection survives and cash still works");
+      log("wn", "Declined(\"Card declined by issuer.\") \u2192 returned, not thrown");
+      log("k", "back to ITEM_SELECTED with the cash intact");
+      renderDisplay(); paintDiagram();
       return;
     }
-    say("Gateway timed out. Outcome unknown.", "bad");
-    log("no", "PaymentGatewayException — propagates, the state never advances");
-    log("wn", "nothing was dispensed, but the customer MAY have been charged. Unreconciled.");
+
+    /* the gateway hung */
+    if (cur.claim) {
+      say("Gateway timed out. Claim held.", "bad");
+      log("no", "PaymentGatewayException \u2014 propagates, and the claim is KEPT");
+      log("k", "nobody else may buy an item we may already have been paid for");
+      log("k", "press +31s to let the next request take the stale claim over");
+    } else {
+      say("Gateway timed out. Outcome unknown.", "bad");
+      log("no", "PaymentGatewayException \u2014 propagates, the state never advances");
+      log("wn", "nothing dispensed, but the customer MAY have been charged. Unreconciled.");
+    }
+    renderDisplay(); paintDiagram();
+  }
+
+  /** V4 only: move the clock past the timeout so a stale claim can be taken over. */
+  function expireClaim() {
+    if (S.state !== "PAYMENT_PENDING") {
+      log("k", "no claim is in flight, so there is nothing to expire");
+      return;
+    }
+    S.state = "IDLE"; S.slot = null;
+    var lost = S.credit; S.credit = 0;
+    say("Claim expired. Machine free.");
+    log("ok", "isExpired(now, 30s) \u2192 true, so CAS PAYMENT_PENDING \u2192 IDLE");
+    log("wn", "the abandoned attempt is not recorded anywhere \u2014 a refund may be owed");
+    if (lost > 0) { log("wn", "and the " + lost + " of cash inserted is forgotten with the state"); }
+    renderCase(); renderDisplay(); paintDiagram();
   }
 
   function opCancel() {
+    if (cur.claim && S.state === "PAYMENT_PENDING") {
+      deny("A payment is already in progress.");
+      log("k", "the cash is stuck until the claim expires - the charge is unresolved");
+      return;
+    }
     if (S.state === "IDLE") {
       say("Nothing to return.");
       log("k", "cancel() on an idle machine returns 0 — a no-op, not an error");
@@ -935,7 +1013,11 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
         (cur.card ? " / declined swipe" : "") + "</text>";
 
       if (cur.pending) {
-        svg += node(360, 160, 210, 54, "PAYMENT_PENDING", "earns its place in V4", false, true);
+        var pend = S.state === "PAYMENT_PENDING";
+        svg += edge(465, 142, 465, 166, "", pend, 0);
+        svg += node(360, 166, 210, 50, "PAYMENT_PENDING",
+                cur.claim ? "the claim: charge in flight" : "earns its place in V4",
+                pend, !cur.claim);
       }
 
       var leg = cur.payload
@@ -943,7 +1025,8 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
         : '<span><i style="background:var(--glow)"></i>current state</span>';
       if (cur.perms) { leg += "<span>each state lists what it allows</span>"; }
       if (cur.payload) { leg += "<span>a new object per transition, never mutated</span>"; }
-      if (cur.pending) { leg += '<span style="color:var(--ink-dim)">dashed = not built yet</span>'; }
+      if (cur.claim) { leg += "<span>claim by CAS, then act, then commit</span>"; }
+      else if (cur.pending) { leg += '<span style="color:var(--ink-dim)">dashed = not built yet</span>'; }
       legend.innerHTML = leg;
     }
 
@@ -1040,17 +1123,25 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
   }
 
   /* ---------- the race ---------- */
-  var STOPS = [
+  var STOPS_OLD = [
     { at: 4, label: "enter dispense" },
     { at: 30, label: "read qty = 1" },
     { at: 56, label: "charge card" },
     { at: 82, label: "write qty = 0" }
   ];
+  var STOPS_NEW = [
+    { at: 4, label: "enter swipe" },
+    { at: 30, label: "claim by CAS" },
+    { at: 56, label: "charge card" },
+    { at: 82, label: "commit, release" }
+  ];
+
   function buildTracks() {
+    var stops = raceMode === "old" ? STOPS_OLD : STOPS_NEW;
     ["trackA", "trackB"].forEach(function (id) {
       var t = $(id);
       Array.prototype.forEach.call(t.querySelectorAll(".mark"), function (m) { m.remove(); });
-      STOPS.forEach(function (s) {
+      stops.forEach(function (s) {
         var m = document.createElement("div");
         m.className = "mark";
         m.style.left = s.at + "%";
@@ -1059,35 +1150,58 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
       });
     });
   }
+
   function raceReset() {
-    $("runA").style.left = "0%"; $("runB").style.left = "0%";
-    $("runA").className = "runner"; $("runB").className = "runner";
-    $("runA").textContent = "A"; $("runB").textContent = "B";
+    ["runA", "runB"].forEach(function (id, i) {
+      var r = $(id);
+      r.style.left = "0%";
+      r.className = "runner";
+      r.textContent = i === 0 ? "A" : "B";
+    });
     var v = $("raceVerdict");
     v.className = "verdict";
     v.textContent = "Last Coke in slot A1. Press play.";
+    $("raceCode").innerHTML = raceMode === "old"
+      ? "<span class='r'>if (amountInserted >= price) {   // A and B both pass</span>\n<span class='r'>    slot.reduceQuantity();       // both write 0</span>\n<span class='r'>}</span>\n<span class='c'>// and state = ... overwrites the other's transaction</span>"
+      : "<span class='g'>CAS(ITEM_SELECTED -> PAYMENT_PENDING)   // phase 1, pure</span>\n<span class='g'>authorizeCard(gateway)                 // phase 2, holds nothing</span>\n<span class='g'>CAS(PAYMENT_PENDING -> IDLE)           // phase 3</span>\n<span class='g'>releaseItem()                          // winner only</span>";
+    buildTracks();
   }
+
   function racePlay() {
     raceReset();
     var a = $("runA"), b = $("runB"), v = $("raceVerdict");
     var fast = reduceMotion();
     var t = function (ms) { return fast ? Math.min(ms / 8, 90) : ms; };
-    setTimeout(function () { a.style.left = "30%"; a.textContent = "A reads 1"; }, t(120));
-    setTimeout(function () { b.style.left = "30%"; b.textContent = "B reads 1"; }, t(520));
+
+    if (raceMode === "old") {
+      setTimeout(function () { a.style.left = "30%"; a.textContent = "A reads 1"; }, t(120));
+      setTimeout(function () { b.style.left = "30%"; b.textContent = "B reads 1"; }, t(520));
+      setTimeout(function () { v.textContent = "Both threads have read quantity = 1. Neither has written yet."; }, t(1500));
+      setTimeout(function () { a.style.left = "56%"; a.textContent = "A charges"; }, t(1700));
+      setTimeout(function () { b.style.left = "56%"; b.textContent = "B charges"; }, t(2100));
+      setTimeout(function () {
+        a.style.left = "82%"; a.textContent = "A writes 0";
+        b.style.left = "82%"; b.textContent = "B writes 0";
+        b.className = "runner bad";
+      }, t(3100));
+      setTimeout(function () {
+        v.className = "verdict bad";
+        v.textContent = "Two cards charged. One Coke. And quantity ended at 0 rather than -1, so the books look plausible \u2014 the only evidence is a missing can at refill time.";
+      }, t(4100));
+      return;
+    }
+
+    setTimeout(function () { a.style.left = "30%"; a.textContent = "A: CAS wins"; a.className = "runner ok"; }, t(150));
     setTimeout(function () {
-      v.textContent = "Both threads have read quantity = 1. Neither has written yet.";
-    }, t(1500));
+      b.style.left = "30%"; b.textContent = "B: CAS loses \u2192 Busy"; b.className = "runner bad";
+      v.textContent = "B lost the claim. It never reached the gateway, so there is nothing to undo.";
+    }, t(700));
     setTimeout(function () { a.style.left = "56%"; a.textContent = "A charges"; }, t(1700));
-    setTimeout(function () { b.style.left = "56%"; b.textContent = "B charges"; }, t(2100));
+    setTimeout(function () { a.style.left = "82%"; a.textContent = "A commits, releases"; }, t(2700));
     setTimeout(function () {
-      a.style.left = "82%"; a.textContent = "A writes 0";
-      b.style.left = "82%"; b.textContent = "B writes 0";
-      b.className = "runner bad";
-    }, t(3100));
-    setTimeout(function () {
-      v.className = "verdict bad";
-      v.textContent = "Two cards charged. One Coke. Thread B sold stock that no longer existed — and no exception was thrown anywhere.";
-    }, t(4100));
+      v.className = "verdict good";
+      v.textContent = "One charge, one Coke, stock exactly 0. B was told to try again in a moment \u2014 and a retry loop would have charged A twice, which is why losing the claim returns instead of retrying.";
+    }, t(3600));
   }
 
   /* ---------- boot ---------- */
@@ -1112,15 +1226,28 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
     };
   });
 
+  $("bExpire").onclick = expireClaim;
   $("bDispense").onclick = opDispense;
   $("bCancel").onclick = opCancel;
   $("bCard").onclick = opCard;
   $("racePlay").onclick = racePlay;
   $("raceReset").onclick = raceReset;
+  $("raceOld").onclick = function () {
+    raceMode = "old";
+    $("raceOld").classList.add("on");
+    $("raceNew").classList.remove("on");
+    raceReset();
+  };
+  $("raceNew").onclick = function () {
+    raceMode = "new";
+    $("raceNew").classList.add("on");
+    $("raceOld").classList.remove("on");
+    raceReset();
+  };
 
   renderNotes(REJECTED, $("rejected"));
   renderSeqs();
-  buildTracks();
+  raceReset();
   resetStock();
   selectVersion(VERSIONS[0]);
   logEl.innerHTML = "";
