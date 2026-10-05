@@ -1,0 +1,1129 @@
+<title>Vending Machine, Five Ways</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: version rail on top, machine panel beside a live state diagram, findings below */
+:root {
+  --bg: #eceff4;
+  --surface: #ffffff;
+  --surface-2: #e3e8f0;
+  --ink: #141b26;
+  --ink-dim: #596878;
+  --line: #c8d1dd;
+  --glow: #0d7a84;
+  --warn: #9c5407;
+  --bad: #a32332;
+  --good: #116b45;
+
+  /* the machine is a physical object: it keeps its colours in both themes */
+  --cabinet: #2a323e;
+  --cabinet-2: #202733;
+  --cabinet-line: #3c4553;
+  --vfd-bg: #080e18;
+  --vfd: #5fe0d2;
+  --vfd-warn: #ffb648;
+  --vfd-bad: #ff6f7d;
+
+  --shadow: 0 1px 2px rgba(20, 27, 38, .06), 0 8px 24px rgba(20, 27, 38, .07);
+  --font-display: "Chakra Petch", "Trebuchet MS", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0e15;
+    --surface: #111822;
+    --surface-2: #19212e;
+    --ink: #e7eef7;
+    --ink-dim: #94a2b5;
+    --line: #26303e;
+    --glow: #54d5c7;
+    --warn: #e5a74b;
+    --bad: #e46e7f;
+    --good: #45c08c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 10px 30px rgba(0, 0, 0, .45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0e15;
+  --surface: #111822;
+  --surface-2: #19212e;
+  --ink: #e7eef7;
+  --ink-dim: #94a2b5;
+  --line: #26303e;
+  --glow: #54d5c7;
+  --warn: #e5a74b;
+  --bad: #e46e7f;
+  --good: #45c08c;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 10px 30px rgba(0, 0, 0, .45);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1140px; margin: 0 auto; padding-inline: 18px; padding-block: 28px 56px; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: -.01em; }
+h1 { font-size: clamp(30px, 5.2vw, 46px); line-height: 1.05; }
+h2 { font-size: clamp(21px, 3vw, 27px); }
+h3 { font-size: 16px; }
+p { margin: 0; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-dim);
+}
+
+/* ---------- header ---------- */
+header { display: grid; gap: 14px; margin-bottom: 26px; }
+.lede { color: var(--ink-dim); max-width: 62ch; font-size: 16px; }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+/* ---------- version rail ---------- */
+.rail {
+  display: flex; gap: 8px; overflow-x: auto; padding-block: 4px;
+  scrollbar-width: thin; margin-bottom: 20px;
+}
+.vbtn {
+  flex: 1 1 0; min-width: 136px; text-align: left; cursor: pointer;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 12px; font: inherit; display: grid; gap: 1px;
+  transition: border-color .18s, transform .18s, background .18s;
+}
+.vbtn:hover { border-color: var(--glow); transform: translateY(-1px); }
+.vbtn .vid { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; color: var(--ink-dim); }
+.vbtn .vname { font-family: var(--font-display); font-weight: 600; font-size: 14.5px; line-height: 1.25; }
+.vbtn[aria-selected="true"] {
+  border-color: var(--glow); background: color-mix(in srgb, var(--glow) 11%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--glow);
+}
+.vbtn[aria-selected="true"] .vid { color: var(--glow); }
+.vbtn:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+.vbtn[data-future="1"] .vname { color: var(--ink-dim); }
+
+/* ---------- main two-column stage ---------- */
+.stage { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 860px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: var(--shadow); min-width: 0;
+}
+.card > .hd {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid var(--line);
+}
+.card > .bd { padding: 14px; }
+
+/* ---------- the machine ---------- */
+.machine {
+  background: linear-gradient(175deg, var(--cabinet) 0%, var(--cabinet-2) 100%);
+  border: 1px solid var(--cabinet-line); border-radius: 16px;
+  padding: 14px; display: grid; gap: 12px;
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.machine.shake { animation: shake .34s cubic-bezier(.36, .07, .19, .97); }
+@keyframes shake {
+  10%, 90% { transform: translateX(-1.5px); }
+  20%, 80% { transform: translateX(2.5px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+
+.brand {
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--font-display); font-size: 11px; letter-spacing: .18em;
+  text-transform: uppercase; color: #8e9bad;
+}
+.brand .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vfd); box-shadow: 0 0 8px var(--vfd); }
+
+/* glass case with slots */
+.case {
+  background: linear-gradient(160deg, rgba(120, 160, 190, .14), rgba(10, 16, 26, .5));
+  border: 1px solid var(--cabinet-line); border-radius: 9px;
+  padding: 9px; display: grid; gap: 7px; position: relative; overflow: hidden;
+}
+.case::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(118deg, transparent 32%, rgba(255, 255, 255, .11) 42%, transparent 52%);
+}
+.slot {
+  display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 9px;
+  background: rgba(8, 14, 24, .5); border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 7px; padding: 6px 8px; position: relative;
+}
+.slot.sel { border-color: var(--vfd); box-shadow: 0 0 0 1px var(--vfd), 0 0 16px rgba(95, 224, 210, .3); }
+.slot.out { opacity: .5; }
+.slotcode {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+  color: var(--vfd); background: rgba(95, 224, 210, .1);
+  border: 1px solid rgba(95, 224, 210, .28); border-radius: 5px;
+  text-align: center; padding: 2px 0;
+}
+.slotname { font-size: 12.5px; color: #dce4ee; line-height: 1.3; }
+.slotname small { display: block; color: #8e9bad; font-family: var(--font-mono); font-size: 10.5px; }
+.cans { display: flex; gap: 3px; }
+.can {
+  width: 9px; height: 19px; border-radius: 2px;
+  background: linear-gradient(180deg, #d9e2ee, #8c9bb0);
+  box-shadow: inset -2px 0 0 rgba(0, 0, 0, .2);
+  transition: opacity .3s, transform .45s;
+}
+.can.gone { opacity: 0; transform: translateY(22px) rotate(14deg); }
+.soldout {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em;
+  color: var(--vfd-warn); border: 1px solid currentColor; border-radius: 4px; padding: 1px 4px;
+}
+
+/* VFD display */
+.vfd {
+  background: var(--vfd-bg); border: 1px solid #1d2838; border-radius: 8px;
+  padding: 10px 11px; font-family: var(--font-mono); min-height: 92px;
+  display: grid; gap: 6px; align-content: start; position: relative; overflow: hidden;
+}
+.vfd .row1 {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #5d6b7e;
+}
+.vfd .st { color: var(--vfd); text-shadow: 0 0 10px rgba(95, 224, 210, .55); }
+.vfd .msg { font-size: 12.5px; color: var(--vfd); text-shadow: 0 0 9px rgba(95, 224, 210, .4); min-height: 2.6em; }
+.vfd .msg.warn { color: var(--vfd-warn); text-shadow: 0 0 9px rgba(255, 182, 72, .45); }
+.vfd .msg.bad { color: var(--vfd-bad); text-shadow: 0 0 9px rgba(255, 111, 125, .5); }
+.vfd .credit { font-size: 11px; color: #7b8a9e; display: flex; justify-content: space-between; }
+.vfd .credit b { color: var(--vfd); font-weight: 500; }
+.vfd.flick { animation: flick .22s steps(2) 2; }
+@keyframes flick { 50% { opacity: .55; } }
+
+/* keypad + controls */
+.pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.key {
+  font-family: var(--font-mono); font-size: 12.5px; cursor: pointer;
+  background: #39424f; color: #e2e9f2;
+  border: 1px solid #4a5563; border-radius: 7px; padding: 8px 4px;
+  transition: transform .09s, background .15s, box-shadow .15s;
+}
+.key:hover:not(:disabled) { background: #434d5c; }
+.key:active:not(:disabled) { transform: translateY(1.5px); }
+.key:disabled { opacity: .36; cursor: not-allowed; }
+.key:focus-visible { outline: 2px solid var(--vfd); outline-offset: 2px; }
+.key.wide { grid-column: span 3; }
+.key.half { grid-column: span 3; }
+.key.go { background: #0e5f68; border-color: #15808c; color: #d8fbf7; }
+.key.go:hover:not(:disabled) { background: #11717c; }
+.key.cancel { background: #4a2b31; border-color: #6b3d45; color: #ffd9de; }
+.key.cancel:hover:not(:disabled) { background: #5a343b; }
+.key.card { background: #2f3a52; border-color: #44527a; color: #dfe6ff; }
+.key.card:hover:not(:disabled) { background: #384565; }
+.coins { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+
+/* dispense tray */
+.tray {
+  border: 1px solid var(--cabinet-line); border-radius: 8px; height: 46px;
+  background: rgba(8, 14, 24, .55); position: relative; overflow: hidden;
+  display: grid; place-items: center;
+}
+.tray span {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: #5d6b7e;
+}
+.drop {
+  position: absolute; left: 50%; top: -26px; width: 15px; height: 28px; border-radius: 3px;
+  background: linear-gradient(180deg, #e4ebf4, #93a2b6); margin-left: -7px;
+}
+.drop.go { animation: drop .62s cubic-bezier(.45, 1.5, .55, 1) forwards; }
+@keyframes drop {
+  0% { top: -26px; transform: rotate(0); }
+  60% { top: 15px; transform: rotate(-9deg); }
+  78% { top: 9px; transform: rotate(5deg); }
+  100% { top: 15px; transform: rotate(0); }
+}
+.coinfly {
+  position: absolute; right: 12px; bottom: 7px; width: 13px; height: 13px; border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #ffdf96, #c98f1d);
+}
+.coinfly.go { animation: coinfly .5s ease-in forwards; }
+@keyframes coinfly {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(6px, -56px) scale(.6); opacity: 0; }
+}
+
+/* ---------- right column ---------- */
+.diagram { position: relative; }
+.diagram svg { width: 100%; height: auto; display: block; }
+.legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 10px 14px;
+  border-top: 1px solid var(--line); font-family: var(--font-mono); font-size: 10.5px;
+  color: var(--ink-dim); letter-spacing: .04em;
+}
+.legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: -1px; }
+
+.tracegrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+@media (max-width: 720px) { .tracegrid { grid-template-columns: minmax(0, 1fr); } }
+
+.log {
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55;
+  display: grid; gap: 3px; max-height: 236px; overflow-y: auto; min-width: 0;
+}
+.log p { display: grid; grid-template-columns: 15px 1fr; gap: 7px; word-break: break-word; }
+.log .k { color: var(--ink-dim); }
+.log .ok { color: var(--good); }
+.log .no { color: var(--bad); }
+.log .wn { color: var(--warn); }
+.log .nu { color: var(--ink-dim); font-style: italic; }
+.log p.fresh { animation: slidein .3s ease-out; }
+@keyframes slidein { from { opacity: 0; transform: translateX(-6px); } }
+
+.seq { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  cursor: pointer; font: 500 12px var(--font-body); background: var(--surface-2);
+  color: var(--ink); border: 1px solid var(--line); border-radius: 999px;
+  padding: 5px 11px; transition: border-color .16s, transform .16s;
+}
+.chip:hover { border-color: var(--glow); transform: translateY(-1px); }
+.chip:focus-visible { outline: 2px solid var(--glow); outline-offset: 2px; }
+.chip.on { border-color: var(--glow); background: color-mix(in srgb, var(--glow) 13%, var(--surface)); }
+
+.notes { display: grid; gap: 10px; }
+.note { display: grid; grid-template-columns: 22px 1fr; gap: 9px; align-items: start; }
+.note .ic {
+  width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 500; margin-top: 1px;
+}
+.note.won .ic { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.note.cost .ic { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.note.broke .ic { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+.note b { font-weight: 600; }
+.note span { color: var(--ink-dim); }
+
+.counter { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 12px; }
+.bar { flex: 1; height: 7px; border-radius: 99px; background: var(--surface-2); overflow: hidden; min-width: 40px; }
+.bar i { display: block; height: 100%; background: var(--bad); border-radius: 99px; transition: width .6s cubic-bezier(.3, 1, .4, 1); }
+.bar.good i { background: var(--good); }
+
+.code {
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px;
+  padding: 11px 12px; overflow-x: auto; white-space: pre; color: var(--ink);
+}
+.code .c { color: var(--ink-dim); }
+.code .r { color: var(--bad); }
+.code .g { color: var(--good); }
+
+section.block { margin-top: 34px; }
+.sechd { display: grid; gap: 5px; margin-bottom: 14px; }
+.sechd p { color: var(--ink-dim); max-width: 64ch; }
+
+/* race animation */
+.race { display: grid; gap: 12px; }
+.lane { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 10px; align-items: center; }
+.lane .who { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-dim); }
+.track {
+  position: relative; height: 38px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface-2); overflow: hidden;
+}
+.mark {
+  position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line);
+}
+.mark b {
+  position: absolute; top: 3px; left: 5px; font-family: var(--font-mono);
+  font-size: 9.5px; letter-spacing: .06em; color: var(--ink-dim); white-space: nowrap; font-weight: 400;
+}
+.runner {
+  position: absolute; top: 9px; left: 0; height: 20px; border-radius: 6px;
+  display: grid; place-items: center; padding: 0 9px;
+  font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap;
+  background: var(--glow); color: var(--bg);
+  transition: left 1s linear, background .3s;
+}
+.runner.bad { background: var(--bad); color: #fff; }
+.verdict {
+  font-family: var(--font-mono); font-size: 12px; padding: 10px 12px; border-radius: 9px;
+  border: 1px dashed var(--line); color: var(--ink-dim); min-height: 42px;
+}
+.verdict.bad { border-color: var(--bad); color: var(--bad); border-style: solid; }
+
+.btn {
+  cursor: pointer; font: 600 13px var(--font-display); letter-spacing: .02em;
+  background: var(--glow); color: var(--surface); border: 0; border-radius: 8px; padding: 9px 16px;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+
+footer { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; }
+footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink); }
+
+.gw { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--ink-dim); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001s !important; transition-duration: .001s !important; }
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Low level design · built five times</p>
+  <h1>Vending Machine, Five Ways</h1>
+  <p class="lede">
+    The same machine, designed five times over. Press the buttons — then switch version and press
+    the same buttons again. <strong>The design changes what the machine allows.</strong>
+    V1 will hand you a free Coke.
+  </p>
+</header>
+
+<div class="rail" role="tablist" aria-label="Design version"></div>
+
+<div class="stage">
+
+  <div>
+    <div class="machine" id="machine">
+      <div class="brand"><span>Slot&nbsp;Machine&nbsp;Co.</span><span class="dot" aria-hidden="true"></span></div>
+      <div class="case" id="case"></div>
+      <div class="vfd" id="vfd">
+        <div class="row1"><span>state</span><span class="st" id="stName">IDLE</span></div>
+        <div class="msg" id="vfdMsg">Select an item.</div>
+        <div class="credit"><span>credit <b id="credit">0</b></span><span id="payload"></span></div>
+      </div>
+      <div class="pad" id="pad"></div>
+      <div class="coins" id="coins"></div>
+      <div class="pad">
+        <button class="key go wide" id="bDispense">DISPENSE</button>
+        <button class="key card half" id="bCard">SWIPE CARD</button>
+        <button class="key cancel half" id="bCancel">COIN RETURN</button>
+      </div>
+      <div class="tray" id="tray"><span>push flap</span></div>
+    </div>
+    <div class="gw" id="gwRow" hidden>
+      <span>card gateway:</span>
+      <button class="chip on" data-gw="APPROVE">approves</button>
+      <button class="chip" data-gw="DECLINE">declines</button>
+      <button class="chip" data-gw="FAIL">times out</button>
+    </div>
+  </div>
+
+  <div style="display:grid; gap:18px; min-width:0;">
+
+    <div class="card diagram">
+      <div class="hd">
+        <h2 id="vTitle">V1 — the simplest thing that works</h2>
+        <span class="eyebrow" id="vTag"></span>
+      </div>
+      <div class="bd" id="diagHost"></div>
+      <div class="legend" id="diagLegend"></div>
+    </div>
+
+    <div class="card">
+      <div class="hd"><h3>Try a sequence</h3><span class="eyebrow">then switch version</span></div>
+      <div class="bd" style="display:grid; gap:12px;">
+        <div class="seq" id="seqRow"></div>
+        <div class="tracegrid">
+          <div style="min-width:0">
+            <p class="eyebrow" style="margin-bottom:7px">What happened</p>
+            <div class="log" id="log"></div>
+          </div>
+          <div style="min-width:0; display:grid; gap:12px; align-content:start">
+            <div>
+              <p class="eyebrow" style="margin-bottom:7px">Where the rules live</p>
+              <div class="counter">
+                <span id="guardLabel">7 checks</span>
+                <span class="bar" id="guardBar"><i style="width:100%"></i></span>
+              </div>
+              <p style="color:var(--ink-dim); font-size:12.5px; margin-top:6px" id="guardNote"></p>
+            </div>
+            <div class="code" id="snippet"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="hd"><h3 id="notesTitle">What this version bought, and what it cost</h3></div>
+      <div class="bd"><div class="notes" id="notes"></div></div>
+    </div>
+
+  </div>
+</div>
+
+<section class="block">
+  <div class="sechd">
+    <p class="eyebrow">V4 — the problem, not yet the fix</p>
+    <h2>Two people, one Coke</h2>
+    <p>
+      Every version above assumes one user at a time. A card charge takes a few hundred
+      milliseconds, and during that wait a second person can press DISPENSE. Watch where the two
+      runs cross.
+    </p>
+  </div>
+  <div class="card">
+    <div class="bd" style="display:grid; gap:14px;">
+      <div class="race">
+        <div class="lane">
+          <span class="who">thread A</span>
+          <div class="track" id="trackA"><div class="runner" id="runA">A</div></div>
+        </div>
+        <div class="lane">
+          <span class="who">thread B</span>
+          <div class="track" id="trackB"><div class="runner" id="runB">B</div></div>
+        </div>
+      </div>
+      <div class="verdict" id="raceVerdict">Last Coke in slot A1. Press play.</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn" id="racePlay">Run both threads</button>
+        <button class="btn ghost" id="raceReset">Reset</button>
+      </div>
+      <p style="color:var(--ink-dim); font-size:13px; max-width:66ch;">
+        Both threads read <code style="font-family:var(--font-mono)">quantity = 1</code> before either
+        writes <code style="font-family:var(--font-mono)">quantity = 0</code>. Two cards are charged,
+        one Coke exists. Immutable states make the fix possible: a transition is a single reference
+        swap, so it can become one atomic compare-and-set instead of a read followed by a write.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="sechd">
+    <p class="eyebrow">The through-line</p>
+    <h2>Why each change was allowed in</h2>
+    <p>No pattern was used until the previous version actually hurt. These are the patterns that were considered and left out.</p>
+  </div>
+  <div class="card">
+    <div class="bd">
+      <div class="notes" id="rejected"></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>
+    Built as an interview exercise: one version per commit, each solving a problem the last one
+    caused. The Java lives in <code>com.vendingmachine</code> with 59 JUnit tests; the long-form
+    write-up is <code>VendingMachine.md</code>. V4 (concurrency) and V5 (coin float, refills,
+    transaction log) are still to come.
+  </p>
+</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- catalogue ---------- */
+  var STOCK = [
+    { code: "A1", name: "Coke",  price: 25, qty: 2 },
+    { code: "A2", name: "Chips", price: 20, qty: 0 },
+    { code: "B1", name: "Water", price: 15, qty: 2 }
+  ];
+  var inv = {};
+  function resetStock() { STOCK.forEach(function (s) { inv[s.code] = { code: s.code, name: s.name, price: s.price, qty: s.qty }; }); }
+
+  /* ---------- versions ---------- */
+  var VERSIONS = [
+    {
+      id: "V1", name: "Naive OOP", tag: "state is invisible",
+      title: "V1 — the simplest thing that works",
+      guards: false, card: false, payload: false,
+      guardCount: 7, guardLabel: "7 checks, 4 methods",
+      guardNote: "There are no rules at all yet. Once they are added, each one is an if at the top of a method, reasoning about field values.",
+      snippet: "<span class='c'>// the state is never written down -</span>\n<span class='c'>// it is worked out from two fields</span>\nif (selectedSlot == null) ...\nif (amountInserted &lt; price) ...\n\n<span class='r'>// nothing stops a silly order of calls</span>",
+      notes: [
+        ["won", "+", "Four small classes", "VendingMachine, Inventory, Slot, Item. Item and Slot stay separate, so one drink can sit in two slots."],
+        ["cost", "~", "Change is a number", "Not actual coins. We assume unlimited change, and say so out loud."],
+        ["broke", "!", "The machine accepts nonsense", "Press DISPENSE having paid nothing and it hands over a free item."],
+        ["broke", "!", "No single rulebook", "Nothing to point at and say “these are the rules”."]
+      ]
+    },
+    {
+      id: "V2a", name: "Name the state", tag: "derived, never stored",
+      title: "V2a — give the state a name",
+      guards: true, card: false, payload: false,
+      guardCount: 7, guardLabel: "7 checks, 1 comparison",
+      guardNote: "state() is calculated from the fields, so the two can never disagree. The checks are renamed, not removed - but the comparison now exists in exactly one place.",
+      snippet: "<span class='g'>private MachineState state() {</span>\n<span class='g'>  return selectedSlot == null</span>\n<span class='g'>       ? IDLE : ITEM_SELECTED;</span>\n<span class='g'>}</span>\n\n<span class='c'>// never assigned, so it cannot go stale</span>",
+      notes: [
+        ["won", "+", "The state has a name", "IDLE and ITEM_SELECTED can go in a log line, a message, a diagram."],
+        ["won", "+", "A seam", "When OUT_OF_SERVICE arrives, only state() changes - not one caller."],
+        ["cost", "~", "PAID is not a state", "If you have to calculate it, it is a condition. It stays an if inside dispense()."],
+        ["broke", "!", "The rules are still invisible", "“What is legal in ITEM_SELECTED?” means reading four method bodies."]
+      ]
+    },
+    {
+      id: "V2b", name: "Rules as data", tag: "a table you can read",
+      title: "V2b — write the rules down as data",
+      guards: true, card: false, payload: false, perms: true,
+      guardCount: 1, guardLabel: "1 line per state",
+      guardNote: "Each state declares the operations it allows. The question “what is legal here?” is now answered by reading one line.",
+      snippet: "IDLE(EnumSet.of(\n  SHOW_ITEMS, SELECT_ITEM, CANCEL)),\n\nITEM_SELECTED(EnumSet.of(\n  SHOW_ITEMS, INSERT_MONEY,\n  DISPENSE, CANCEL));",
+      notes: [
+        ["won", "+", "The rulebook is readable", "Searching for checks gave the wrong answer: cancel and showItems were invisible to the search."],
+        ["won", "+", "43 tests arrive", "Two bugs had already shipped silently. A demo prints problems; a test fails on them."],
+        ["cost", "~", "Data conditions stay out", "“Sold out” and “not enough money” read data, so they are not in the table."],
+        ["broke", "!", "You can still forget a check", "A new operation with no check runs completely unguarded."],
+        ["broke", "!", "A state cannot hold data", "ITEM_SELECTED is a label. Which slot? How much money? Still on the machine."]
+      ]
+    },
+    {
+      id: "V2c", name: "State objects", tag: "each state owns its data",
+      title: "V2c — turn each state into a class",
+      guards: true, card: false, payload: true,
+      guardCount: 0, guardLabel: "0 checks written",
+      guardNote: "Every operation on the State interface throws by default, so a state allows exactly what it overrides. Forgetting now means refusing.",
+      snippet: "<span class='c'>// deny by default</span>\ndefault Transition&lt;...&gt; dispense() {\n  throw new IllegalStateException(\n      deniedMessage());\n}\n\n<span class='g'>// ItemSelectedState holds slot + amount</span>",
+      notes: [
+        ["won", "+", "A forgotten check is impossible", "The interface refuses anything a state did not explicitly allow."],
+        ["won", "+", "Money cannot leak", "States are immutable, so each purchase is a new object. Nothing to reset, nothing to forget."],
+        ["won", "+", "The wrong constant cannot be typed", "The method is called insertMoney. The compiler ties the name to the behaviour."],
+        ["cost", "~", "The rules are now implicit", "V2b answered “which states allow CANCEL?” in one line. Now you open every class."],
+        ["broke", "!", "Signatures start churning", "selectItem(String, Inventory) today. A gateway tomorrow. A coin float after that."]
+      ]
+    },
+    {
+      id: "V3", name: "Card payments", tag: "someone else can say no",
+      title: "V3 — card payments",
+      guards: true, card: true, payload: true,
+      guardCount: 0, guardLabel: "0 checks written",
+      guardNote: "Cash is treated as the boring case of the general rule: every payment is authorized, and cash's authorization is a local comparison that returns at once.",
+      snippet: "<span class='c'>// one pipeline, two tenders</span>\nCashPayment(30).authorize(25)\nCardPayment(card, gw).authorize(25)\n\n<span class='g'>sealed interface PurchaseResult</span>\n<span class='g'>  permits Dispensed, Declined</span>",
+      notes: [
+        ["won", "+", "Failure can be described", "A declined card is a returned value. “The answer is no” is not an exception."],
+        ["won", "+", "The gateway is swappable", "An interface the domain declares. Tests can force approve, decline or timeout; a real bank cannot be asked to decline."],
+        ["won", "+", "No card reader? Decline politely", "A null-object gateway, instead of a crash or a null check."],
+        ["cost", "~", "No new state", "PAYMENT_PENDING was refused: with a blocking call, no caller could ever observe it."],
+        ["broke", "!", "A timeout leaves money unaccounted", "The customer may have been charged and nothing records it."],
+        ["broke", "!", "Retry charges twice", "There is no way to say “this is the same attempt as before”."]
+      ]
+    },
+    {
+      id: "V4", name: "Concurrency", tag: "not built yet", future: true,
+      title: "V4 — two people at once",
+      guards: true, card: true, payload: true, pending: true,
+      guardCount: 0, guardLabel: "0 checks written",
+      guardNote: "Not implemented yet. This is where PAYMENT_PENDING finally earns the place V3 refused it, because a second caller must be turned away while the first charge is in flight.",
+      snippet: "<span class='c'>// the race, in two lines</span>\nif (slot.qty &gt; 0)   <span class='r'>// A reads 1, B reads 1</span>\n  slot.reduce();   <span class='r'>// both write 0</span>\n\n<span class='g'>// immutable state => one atomic swap</span>",
+      notes: [
+        ["broke", "!", "Both threads pass the stock check", "Each reads quantity = 1 before either writes 0. Two charges, one Coke."],
+        ["cost", "~", "PAYMENT_PENDING now earns it", "The machine genuinely rests there, waiting for someone else's answer."],
+        ["won", "+", "Immutability pays off", "A transition is one reference swap, so it can become one atomic compare-and-set."]
+      ]
+    }
+  ];
+
+  var REJECTED = [
+    ["broke", "×", "A Payment class in V1", "Money was a single whole number. The class would have held one integer and added one subtraction."],
+    ["broke", "×", "A TransitionRules class in V2b", "It would have wrapped a single map. The rules went on the state instead."],
+    ["broke", "×", "A context callback in V2c", "A state holding the machine could call any method on it, including cancel() from inside dispense()."],
+    ["broke", "×", "A MachineContext in V2c", "With one dependency it was indirection for its own sake. V3 added a second, and V5 adds a third - then it earns it."],
+    ["broke", "×", "PaymentPendingState in V3", "With a blocking call it lasts microseconds inside one method. No caller can reach it until there are threads."]
+  ];
+
+  /* ---------- machine state ---------- */
+  var cur = VERSIONS[0];
+  var gw = "APPROVE";
+  var S = { state: "IDLE", slot: null, credit: 0 };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var caseEl = $("case"), padEl = $("pad"), coinsEl = $("coins"), logEl = $("log");
+  var vfdEl = $("vfd"), msgEl = $("vfdMsg"), stEl = $("stName"), creditEl = $("credit"), payloadEl = $("payload");
+  var trayEl = $("tray"), machineEl = $("machine");
+
+  function reduceMotion() {
+    return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  /* ---------- log ---------- */
+  function log(kind, text) {
+    var marks = { ok: "✓", no: "✕", wn: "!", nu: "?", k: "·" };
+    var p = document.createElement("p");
+    p.className = "fresh";
+    p.innerHTML = '<span class="' + kind + '">' + (marks[kind] || "·") + '</span><span class="' + kind + '">' +
+      text.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</span>";
+    logEl.appendChild(p);
+    logEl.scrollTop = logEl.scrollHeight;
+    while (logEl.children.length > 40) { logEl.removeChild(logEl.firstChild); }
+  }
+
+  function say(text, tone) {
+    msgEl.textContent = text;
+    msgEl.className = "msg" + (tone ? " " + tone : "");
+    if (!reduceMotion()) {
+      vfdEl.classList.remove("flick");
+      void vfdEl.offsetWidth;
+      vfdEl.classList.add("flick");
+    }
+  }
+
+  function deny(text) {
+    say(text, "bad");
+    log("no", text);
+    if (!reduceMotion()) {
+      machineEl.classList.remove("shake");
+      void machineEl.offsetWidth;
+      machineEl.classList.add("shake");
+    }
+  }
+
+  /* ---------- rendering ---------- */
+  function renderCase() {
+    caseEl.innerHTML = "";
+    Object.keys(inv).forEach(function (code) {
+      var s = inv[code], out = s.qty === 0;
+      var row = document.createElement("div");
+      row.className = "slot" + (S.slot === code ? " sel" : "") + (out ? " out" : "");
+      var cans = "";
+      for (var i = 0; i < Math.max(s.qty, 1); i++) {
+        cans += '<span class="can' + (i >= s.qty ? " gone" : "") + '"></span>';
+      }
+      row.innerHTML =
+        '<span class="slotcode">' + code + "</span>" +
+        '<span class="slotname">' + s.name + "<small>" + s.price + " · " + s.qty + " left</small></span>" +
+        (out ? '<span class="soldout">SOLD OUT</span>' : '<span class="cans">' + cans + "</span>");
+      caseEl.appendChild(row);
+    });
+  }
+
+  function renderDisplay() {
+    stEl.textContent = S.state;
+    creditEl.textContent = S.credit;
+    if (cur.payload && S.slot) {
+      payloadEl.textContent = "ItemSelectedState(" + S.slot + ", " + S.credit + ")";
+    } else if (S.slot) {
+      payloadEl.textContent = "selectedSlot = " + S.slot;
+    } else {
+      payloadEl.textContent = "";
+    }
+    $("bCard").disabled = !cur.card;
+    $("gwRow").hidden = !cur.card;
+  }
+
+  function renderKeys() {
+    padEl.innerHTML = "";
+    Object.keys(inv).forEach(function (code) {
+      var b = document.createElement("button");
+      b.className = "key";
+      b.textContent = code;
+      b.onclick = function () { opSelect(code); };
+      padEl.appendChild(b);
+    });
+    coinsEl.innerHTML = "";
+    [10, 20, 50].forEach(function (n) {
+      var b = document.createElement("button");
+      b.className = "key";
+      b.textContent = "+" + n;
+      b.onclick = function () { opCoin(n); };
+      coinsEl.appendChild(b);
+    });
+  }
+
+  /* ---------- operations ---------- */
+  function allowed(op) {
+    if (!cur.guards) { return true; }
+    if (op === "SELECT_ITEM") { return S.state === "IDLE"; }
+    if (op === "INSERT_MONEY" || op === "DISPENSE" || op === "SWIPE") { return S.state === "ITEM_SELECTED"; }
+    return true;
+  }
+
+  function opSelect(code) {
+    if (!allowed("SELECT_ITEM")) {
+      deny("An item is already selected.");
+      return;
+    }
+    var s = inv[code];
+    if (s.qty === 0) {
+      deny("Item is sold out.");
+      return;
+    }
+    if (!cur.guards && S.slot) {
+      S.slot = code;
+      S.state = "ITEM_SELECTED";
+      say("Selected " + code + ".", "warn");
+      log("wn", "selected " + code + " — the earlier selection was silently thrown away");
+      renderCase(); renderDisplay(); paintDiagram();
+      return;
+    }
+    S.slot = code;
+    S.state = "ITEM_SELECTED";
+    say("Selected " + s.name + ". Insert " + s.price + ".");
+    log("ok", "selectItem(\"" + code + "\") → " + (cur.payload ? "new ItemSelectedState(" + code + ", 0)" : "ITEM_SELECTED"));
+    renderCase(); renderDisplay(); paintDiagram();
+  }
+
+  function opCoin(n) {
+    if (!allowed("INSERT_MONEY")) {
+      deny("No item selected.");
+      return;
+    }
+    S.credit += n;
+    if (!reduceMotion()) {
+      var c = document.createElement("div");
+      c.className = "coinfly go";
+      trayEl.appendChild(c);
+      setTimeout(function () { c.remove(); }, 520);
+    }
+    if (!cur.guards && !S.slot) {
+      say("Credit " + S.credit + ".", "warn");
+      log("wn", "insertMoney(" + n + ") accepted with nothing selected — credit " + S.credit);
+    } else {
+      var need = inv[S.slot].price - S.credit;
+      say(need > 0 ? "Credit " + S.credit + ". Need " + need + " more." : "Credit " + S.credit + ". Press DISPENSE.");
+      log("ok", "insertMoney(" + n + ") → " + (cur.payload ? "new ItemSelectedState(" + S.slot + ", " + S.credit + ")" : "amountInserted = " + S.credit));
+    }
+    renderDisplay(); paintDiagram();
+  }
+
+  function dropItem(name, change, how) {
+    var s = inv[S.slot];
+    s.qty -= 1;
+    if (!reduceMotion()) {
+      var d = document.createElement("div");
+      d.className = "drop go";
+      trayEl.appendChild(d);
+      setTimeout(function () { d.remove(); }, 2200);
+    }
+    say(name + " dispensed. Change " + change + ".");
+    log("ok", how + " → " + name + ", change " + change + ", stock now " + s.qty);
+    S.slot = null; S.credit = 0; S.state = "IDLE";
+    renderCase(); renderDisplay(); paintDiagram();
+  }
+
+  function opDispense() {
+    if (!S.slot) {
+      /* V1 has no check at all, so it walks straight into a null reference */
+      if (!cur.guards) {
+        say("— undefined —", "bad");
+        log("nu", "dispense() with nothing selected → NullPointerException (V1 has no check)");
+      } else {
+        deny("No item selected.");
+      }
+      return;
+    }
+    if (!allowed("DISPENSE")) {
+      deny("No item selected.");
+      return;
+    }
+    var s = inv[S.slot], change = S.credit - s.price;
+    if (change < 0 && !cur.guards) {
+      say(s.name + " dispensed. Change " + change + "!", "warn");
+      log("wn", "dispense() paid " + S.credit + " for a " + s.price + " item → free " + s.name + ", change " + change);
+      var keep = s.name;
+      dropItem(keep, change, "dispense()");
+      return;
+    }
+    if (change < 0) {
+      deny("Insufficient funds. Please insert more money.");
+      log("k", "the " + S.credit + " already inserted is still held — top up and press DISPENSE");
+      return;
+    }
+    dropItem(s.name, change, cur.payload ? "CashPayment(" + S.credit + ").authorize(" + s.price + ")" : "dispense()");
+  }
+
+  function opCard() {
+    if (!cur.card) { return; }
+    if (!allowed("SWIPE")) {
+      deny("No item selected.");
+      log("k", "the swipe never reached the gateway — chargeCount stays 0");
+      return;
+    }
+    var s = inv[S.slot];
+    log("k", "CardPayment.authorize(" + s.price + ") → gateway …");
+    if (gw === "APPROVE") {
+      dropItem(s.name, 0, "Approved(0, \"AUTH-1\")");
+      log("k", "a card is charged the exact price, so change is structurally impossible");
+      return;
+    }
+    if (gw === "DECLINE") {
+      say("Card declined. Try another, or pay cash.", "warn");
+      log("wn", "Declined(\"Card declined by issuer.\") → returned, not thrown");
+      log("k", "state stays ITEM_SELECTED, so the selection survives and cash still works");
+      return;
+    }
+    say("Gateway timed out. Outcome unknown.", "bad");
+    log("no", "PaymentGatewayException — propagates, the state never advances");
+    log("wn", "nothing was dispensed, but the customer MAY have been charged. Unreconciled.");
+  }
+
+  function opCancel() {
+    if (S.state === "IDLE") {
+      say("Nothing to return.");
+      log("k", "cancel() on an idle machine returns 0 — a no-op, not an error");
+      return;
+    }
+    var refund = S.credit;
+    S.slot = null; S.credit = 0; S.state = "IDLE";
+    say("Returned " + refund + ".");
+    log("ok", "cancel() → refund " + refund + ", stock untouched (dispense had not reduced it)");
+    renderCase(); renderDisplay(); paintDiagram();
+  }
+
+  /* ---------- state diagram ---------- */
+  function node(x, y, w, h, label, sub, active, dashed) {
+    /* var() does not resolve in SVG presentation attributes - use inline style */
+    var stroke = active ? "var(--glow)" : "var(--line)";
+    var fill = active ? "color-mix(in srgb, var(--glow) 13%, var(--surface))" : "var(--surface-2)";
+    var boxStyle = "fill:" + fill + ";stroke:" + stroke + ";stroke-width:" + (active ? 2 : 1.2) +
+      (dashed ? ";stroke-dasharray:5 4" : "");
+    var textStyle = "fill:" + (active ? "var(--glow)" : "var(--ink)");
+    var out = "<g>";
+    out += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="9" style="' + boxStyle + '"/>';
+    out += '<text x="' + (x + w / 2) + '" y="' + (y + (sub ? 22 : h / 2 + 5)) +
+      '" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" style="' + textStyle + '">' + label + "</text>";
+    if (sub) {
+      sub.split("\n").forEach(function (line, i) {
+        out += '<text x="' + (x + w / 2) + '" y="' + (y + 40 + i * 14) +
+          '" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" style="fill:var(--ink-dim)">' + line + "</text>";
+      });
+    }
+    return out + "</g>";
+  }
+
+  function edge(x1, y1, x2, y2, label, active, curve) {
+    var col = active ? "var(--glow)" : "var(--line)";
+    var d = curve
+      ? "M " + x1 + " " + y1 + " C " + (x1 + curve) + " " + (y1 - 34) + ", " + (x2 - curve) + " " + (y2 - 34) + ", " + x2 + " " + y2
+      : "M " + x1 + " " + y1 + " L " + x2 + " " + y2;
+    var mid = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 - (curve ? 26 : 0) };
+    return '<path d="' + d + '" marker-end="url(#ah)" style="fill:none;stroke:' + col +
+      ";stroke-width:" + (active ? 2 : 1.2) + '"/>' +
+      '<text x="' + mid.x + '" y="' + (mid.y - 6) +
+      '" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" style="fill:' +
+      (active ? "var(--glow)" : "var(--ink-dim)") + '">' + label + "</text>";
+  }
+
+  function paintDiagram() {
+    var host = $("diagHost"), legend = $("diagLegend");
+    var idle = S.state === "IDLE", sel = S.state === "ITEM_SELECTED";
+    var svg = '<svg viewBox="0 0 640 230" role="img" aria-label="State diagram for ' + cur.id + '">' +
+      '<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">' +
+      '<path d="M 0 0 L 10 5 L 0 10 z" style="fill:var(--line)"/></marker></defs>';
+
+    if (cur.id === "V1") {
+      /* one blob holding scattered ifs */
+      svg += '<rect x="90" y="26" width="460" height="178" rx="12" style="fill:var(--surface-2);stroke:var(--line);stroke-width:1.2"/>';
+      svg += '<text x="320" y="50" text-anchor="middle" font-family="Chakra Petch, sans-serif" font-size="14" style="fill:var(--ink)">VendingMachine</text>';
+      var ifs = [
+        "selectedSlot == null", "amountInserted &lt; price", "slot.isEmpty()",
+        "selectedSlot != null", "amount &lt;= 0", "selectedSlot == null", "amountInserted &lt; price"
+      ];
+      ifs.forEach(function (t, i) {
+        var col = i % 2, row = Math.floor(i / 2);
+        var x = 112 + col * 222, y = 66 + row * 32;
+        svg += '<rect x="' + x + '" y="' + y + '" width="206" height="24" rx="6" style="fill:color-mix(in srgb, var(--bad) 11%, transparent);stroke:var(--bad);stroke-width:1;stroke-dasharray:4 3"/>';
+        svg += '<text x="' + (x + 10) + '" y="' + (y + 16) + '" font-family="IBM Plex Mono, monospace" font-size="10.5" style="fill:var(--bad)">if (' + t + ")</text>";
+      });
+      svg += '<text x="320" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" style="fill:var(--ink-dim)">the state exists only as field values</text>';
+      legend.innerHTML = '<span><i style="background:var(--bad)"></i>a check buried in a method body</span><span>no named states, no rulebook</span>';
+    } else {
+      var payloadSub = cur.payload && sel ? "slot = " + S.slot + "\namount = " + S.credit : null;
+      var permIdle = cur.perms ? "SHOW · SELECT · CANCEL" : null;
+      var permSel = cur.perms ? "SHOW · MONEY · DISPENSE\nCANCEL" + (cur.card ? " · SWIPE" : "") : null;
+
+      svg += edge(190, 76, 360, 76, "selectItem", sel, 0);
+      svg += edge(360, 150, 190, 150, "dispense / cancel", idle && S.slot === null, 0);
+      svg += node(40, 48, 150, cur.perms ? 74 : 56, "IDLE", permIdle, idle, false);
+      svg += node(360, 48, 210, (payloadSub || permSel) ? 92 : 56, "ITEM_SELECTED", payloadSub || permSel, sel, false);
+
+      /* self-loop for insertMoney */
+      svg += '<path d="M 465 140 C 520 178, 410 182, 430 142" marker-end="url(#ah)" style="fill:none;stroke:' +
+        (sel ? "var(--glow)" : "var(--line)") + ";stroke-width:" + (sel ? 2 : 1.2) + '"/>';
+      svg += '<text x="470" y="192" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" style="fill:var(--ink-dim)">insertMoney' +
+        (cur.card ? " / declined swipe" : "") + "</text>";
+
+      if (cur.pending) {
+        svg += node(360, 160, 210, 54, "PAYMENT_PENDING", "earns its place in V4", false, true);
+      }
+
+      var leg = cur.payload
+        ? '<span><i style="background:var(--glow)"></i>current state, holding its own data</span>'
+        : '<span><i style="background:var(--glow)"></i>current state</span>';
+      if (cur.perms) { leg += "<span>each state lists what it allows</span>"; }
+      if (cur.payload) { leg += "<span>a new object per transition, never mutated</span>"; }
+      if (cur.pending) { leg += '<span style="color:var(--ink-dim)">dashed = not built yet</span>'; }
+      legend.innerHTML = leg;
+    }
+
+    host.innerHTML = svg + "</svg>";
+  }
+
+  /* ---------- version switching ---------- */
+  function renderNotes(list, host) {
+    host.innerHTML = "";
+    list.forEach(function (n) {
+      var d = document.createElement("div");
+      d.className = "note " + n[0];
+      d.innerHTML = '<span class="ic">' + n[1] + "</span><div><b>" + n[2] + "</b> <span>" + n[3] + "</span></div>";
+      host.appendChild(d);
+    });
+  }
+
+  function selectVersion(v) {
+    cur = v;
+    $("vTitle").textContent = v.title;
+    $("vTag").textContent = v.tag;
+    $("guardLabel").textContent = v.guardLabel;
+    $("guardNote").textContent = v.guardNote;
+    $("snippet").innerHTML = v.snippet;
+    var bar = $("guardBar");
+    bar.className = "bar" + (v.guardCount <= 1 ? " good" : "");
+    bar.firstChild.style.width = (v.guardCount === 7 ? 100 : v.guardCount === 1 ? 16 : 4) + "%";
+    renderNotes(v.notes, $("notes"));
+    Array.prototype.forEach.call(document.querySelectorAll(".vbtn"), function (b) {
+      b.setAttribute("aria-selected", String(b.dataset.v === v.id));
+    });
+    resetMachine(true);
+    log("k", "—— " + v.id + ": " + v.name.toLowerCase() + " ——");
+  }
+
+  function resetMachine(quiet) {
+    resetStock();
+    S = { state: "IDLE", slot: null, credit: 0 };
+    renderCase(); renderKeys(); renderDisplay(); paintDiagram();
+    if (!quiet) { logEl.innerHTML = ""; }
+    say("Select an item.");
+  }
+
+  /* ---------- scripted sequences ---------- */
+  var SEQS = [
+    { label: "Press dispense, having paid nothing", steps: [["sel", "A1"], ["disp"]] },
+    { label: "Put money in before choosing", steps: [["coin", 50], ["disp"]] },
+    { label: "Choose twice", steps: [["sel", "A1"], ["sel", "B1"], ["coin", 20], ["disp"]] },
+    { label: "Underpay, then top up", steps: [["sel", "A1"], ["coin", 10], ["disp"], ["coin", 20], ["disp"]] },
+    { label: "Buy properly", steps: [["sel", "A1"], ["coin", 50], ["disp"]] },
+    { label: "Swipe a card", card: true, steps: [["sel", "B1"], ["swipe"]] }
+  ];
+
+  var running = null;
+  function runSeq(seq, btn) {
+    if (running) { clearTimeout(running); running = null; }
+    Array.prototype.forEach.call(document.querySelectorAll(".chip[data-seq]"), function (c) { c.classList.remove("on"); });
+    btn.classList.add("on");
+    resetMachine(false);
+    log("k", "sequence: " + seq.label.toLowerCase());
+    var i = 0;
+    var gap = reduceMotion() ? 60 : 720;
+    function step() {
+      if (i >= seq.steps.length) { running = null; btn.classList.remove("on"); return; }
+      var s = seq.steps[i++];
+      if (s[0] === "sel") { opSelect(s[1]); }
+      else if (s[0] === "coin") { opCoin(s[1]); }
+      else if (s[0] === "disp") { opDispense(); }
+      else if (s[0] === "swipe") { opCard(); }
+      running = setTimeout(step, gap);
+    }
+    running = setTimeout(step, gap / 2);
+  }
+
+  function renderSeqs() {
+    var host = $("seqRow");
+    host.innerHTML = "";
+    SEQS.forEach(function (seq) {
+      var b = document.createElement("button");
+      b.className = "chip";
+      b.dataset.seq = "1";
+      b.textContent = seq.label;
+      b.onclick = function () {
+        if (seq.card && !cur.card) {
+          resetMachine(false);
+          log("wn", "this machine has no card reader until V3 — switch version above");
+          say("No card reader in " + cur.id + ".", "warn");
+          return;
+        }
+        runSeq(seq, b);
+      };
+      host.appendChild(b);
+    });
+  }
+
+  /* ---------- the race ---------- */
+  var STOPS = [
+    { at: 4, label: "enter dispense" },
+    { at: 30, label: "read qty = 1" },
+    { at: 56, label: "charge card" },
+    { at: 82, label: "write qty = 0" }
+  ];
+  function buildTracks() {
+    ["trackA", "trackB"].forEach(function (id) {
+      var t = $(id);
+      Array.prototype.forEach.call(t.querySelectorAll(".mark"), function (m) { m.remove(); });
+      STOPS.forEach(function (s) {
+        var m = document.createElement("div");
+        m.className = "mark";
+        m.style.left = s.at + "%";
+        m.innerHTML = "<b>" + s.label + "</b>";
+        t.appendChild(m);
+      });
+    });
+  }
+  function raceReset() {
+    $("runA").style.left = "0%"; $("runB").style.left = "0%";
+    $("runA").className = "runner"; $("runB").className = "runner";
+    $("runA").textContent = "A"; $("runB").textContent = "B";
+    var v = $("raceVerdict");
+    v.className = "verdict";
+    v.textContent = "Last Coke in slot A1. Press play.";
+  }
+  function racePlay() {
+    raceReset();
+    var a = $("runA"), b = $("runB"), v = $("raceVerdict");
+    var fast = reduceMotion();
+    var t = function (ms) { return fast ? Math.min(ms / 8, 90) : ms; };
+    setTimeout(function () { a.style.left = "30%"; a.textContent = "A reads 1"; }, t(120));
+    setTimeout(function () { b.style.left = "30%"; b.textContent = "B reads 1"; }, t(520));
+    setTimeout(function () {
+      v.textContent = "Both threads have read quantity = 1. Neither has written yet.";
+    }, t(1500));
+    setTimeout(function () { a.style.left = "56%"; a.textContent = "A charges"; }, t(1700));
+    setTimeout(function () { b.style.left = "56%"; b.textContent = "B charges"; }, t(2100));
+    setTimeout(function () {
+      a.style.left = "82%"; a.textContent = "A writes 0";
+      b.style.left = "82%"; b.textContent = "B writes 0";
+      b.className = "runner bad";
+    }, t(3100));
+    setTimeout(function () {
+      v.className = "verdict bad";
+      v.textContent = "Two cards charged. One Coke. Thread B sold stock that no longer existed — and no exception was thrown anywhere.";
+    }, t(4100));
+  }
+
+  /* ---------- boot ---------- */
+  var rail = document.querySelector(".rail");
+  VERSIONS.forEach(function (v) {
+    var b = document.createElement("button");
+    b.className = "vbtn";
+    b.dataset.v = v.id;
+    if (v.future) { b.dataset.future = "1"; }
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", "false");
+    b.innerHTML = '<span class="vid">' + v.id + '</span><span class="vname">' + v.name + "</span>";
+    b.onclick = function () { selectVersion(v); };
+    rail.appendChild(b);
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-gw]"), function (b) {
+    b.onclick = function () {
+      gw = b.dataset.gw;
+      Array.prototype.forEach.call(document.querySelectorAll("[data-gw]"), function (o) { o.classList.toggle("on", o === b); });
+      log("k", "gateway set to " + gw.toLowerCase());
+    };
+  });
+
+  $("bDispense").onclick = opDispense;
+  $("bCancel").onclick = opCancel;
+  $("bCard").onclick = opCard;
+  $("racePlay").onclick = racePlay;
+  $("raceReset").onclick = raceReset;
+
+  renderNotes(REJECTED, $("rejected"));
+  renderSeqs();
+  buildTracks();
+  resetStock();
+  selectVersion(VERSIONS[0]);
+  logEl.innerHTML = "";
+  log("k", "V1: no rules yet. Try DISPENSE without paying.");
+})();
+</script>
