@@ -5,8 +5,9 @@ followed by a summary of the build order. Everything after that replays the buil
 each version fixes one named problem the previous version caused, and introduces an
 abstraction only when that problem forces it.
 
-Five versions, each one a commit: V1 naive, V2a/V2b/V2c three different answers to the
-same defect, V3 card payments, V4 two users at once. V5 is not built.
+Six commits: V1 naive, then V2a/V2b/V2c as three different answers to the same defect,
+V3 card payments, V4 two users at once. The code stops there, so the document does too —
+what is still missing is listed at the end as open questions, not as a planned version.
 
 ---
 
@@ -61,6 +62,15 @@ added no pattern at all; it changed *where side effects are allowed to happen*.
 | `VendingMachine` | the entry point; holds the current state in an `AtomicReference`, plus the injected `PaymentGateway` and `Clock`; runs each operation as claim → act → commit |
 
 ### Class diagram
+
+[![The whole design, as a zoomable vector](class-diagram.svg)](class-diagram.svg)
+
+Twenty classes do not fit legibly on a page, and Mermaid in a markdown viewer renders at
+one fixed size. **Click the diagram to open it full size** — it is a vector, so it stays
+sharp at any magnification and your browser's own zoom works on it.
+
+<details>
+<summary>Mermaid source for the diagram above — regenerate the SVG from this whenever the model changes</summary>
 
 ```mermaid
 classDiagram
@@ -226,6 +236,9 @@ classDiagram
     CardPayment --> PaymentGateway : delegates
     PaymentMethod ..> PaymentResult : returns
 ```
+
+</details>
+
 
 ### The state machine
 
@@ -1215,7 +1228,7 @@ the gateway hangs
   B: anything -> "A payment is already in progress."
   ...30 seconds...
   B: expireStaleClaim -> CAS PENDING -> IDLE, B proceeds
-     TODO(V5): the abandoned attempt is recorded nowhere
+     TODO: the abandoned attempt is recorded nowhere
 
 the charge comes back too late
   A: claim won, charge in flight
@@ -1291,7 +1304,7 @@ And a decline moves no money, so a test counting declines must count *calls*, no
 
 ## Open questions
 
-**The transaction log.** Both of V4's `TODO(V5)` markers are the same missing thing. An
+**The transaction log.** Both of V4's `TODO` markers are the same missing thing. An
 orphaned charge means a refund is owed; expiring a claim also discards the record of cash
 the customer physically inserted. The machine knows it may owe money and has nowhere to
 write it down. This is the next thing to build, and it probably wants a repository the way

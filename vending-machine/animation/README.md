@@ -1,6 +1,6 @@
 # Vending Machine, Five Ways — interactive walkthrough
 
-`index.html` is a single self-contained page that teaches the same V1 → V5
+`index.html` is a single self-contained page that teaches the same V1 → V4
 evolution as [`../VendingMachine.md`](../VendingMachine.md), but by letting you
 press the buttons instead of reading about them.
 
@@ -37,18 +37,11 @@ Further down the page: a meter tracking where the rules live (7 scattered checks
 an animation of the V4 race condition — two threads both reading
 `quantity = 1` before either writes `0`, so two cards get charged for one Coke.
 
-## The class diagram, zoomable
+## The class diagram
 
-Mermaid in a markdown viewer renders at one fixed size, which is useless for a
-twenty-class picture. The page carries the same diagram in a frame you can work:
-
-- **drag** to pan
-- **scroll** or **pinch** to zoom, centred on the pointer
-- **double-click**, or the `FIT` button, to fit it back to the width
-- `+` / `-` buttons for keyboard-free zooming
-
-It is the same Mermaid source as the one in the markdown, rendered natively by the
-page, so the two cannot drift apart.
+It is not on this page. It lives in `../VendingMachine.md`, where the rendered
+`class-diagram.svg` is clickable: opening it gives a vector you can zoom as far as
+you like, and the Mermaid source sits beside it in a collapsed block.
 
 ## Notes
 
@@ -64,5 +57,6 @@ page, so the two cannot drift apart.
 - The race animation has two modes: V3's single read-then-write step, which
   charges two cards for one can, and V4's claim / act / commit, where the loser
   never reaches the gateway.
-- V5 appears as the *problem* it is, not a finished design, because the Java for
-  it does not exist yet.
+- The page stops at V4, because that is where the code stops. What is still missing
+  is listed in `../VendingMachine.md` under **Open questions**, rather than shown as
+  a version that does not exist.

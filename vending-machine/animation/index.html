@@ -361,41 +361,6 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
 
 .gw { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--ink-dim); }
 
-/* ---------- zoomable diagram ---------- */
-.dgm {
-  position: relative; overflow: hidden; border: 1px solid var(--line);
-  border-radius: 10px; background: var(--surface-2);
-  height: clamp(320px, 62vh, 680px); touch-action: none;
-}
-.dgm-stage {
-  position: absolute; top: 0; left: 0; transform-origin: 0 0;
-  padding: 18px; cursor: grab;
-}
-.dgm-stage.drag { cursor: grabbing; }
-.dgm-stage svg { max-width: none !important; width: auto !important; height: auto !important; }
-.dgm-ctl {
-  position: absolute; right: 10px; bottom: 10px; display: flex; gap: 5px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  border: 1px solid var(--line); border-radius: 8px; padding: 4px;
-  backdrop-filter: blur(4px);
-}
-.dgm-ctl button {
-  cursor: pointer; width: 30px; height: 28px; display: grid; place-items: center;
-  background: transparent; color: var(--ink); border: 0; border-radius: 5px;
-  font: 500 14px var(--font-mono);
-}
-.dgm-ctl button.wide { width: auto; padding: 0 9px; font-size: 11px; letter-spacing: .04em; }
-.dgm-ctl button:hover { background: var(--surface-2); }
-.dgm-ctl button:focus-visible { outline: 2px solid var(--glow); outline-offset: 1px; }
-.dgm-hint {
-  position: absolute; left: 10px; bottom: 12px; font-family: var(--font-mono);
-  font-size: 10.5px; color: var(--ink-dim); pointer-events: none;
-}
-.dgm-zoom {
-  position: absolute; right: 10px; top: 10px; font-family: var(--font-mono);
-  font-size: 10.5px; color: var(--ink-dim); pointer-events: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001s !important; transition-duration: .001s !important; }
 }
@@ -546,199 +511,12 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
   </div>
 </section>
 
-<section class="block">
-  <div class="sechd">
-    <p class="eyebrow">V4 · class diagram</p>
-    <h2>The whole design, close up</h2>
-    <p>Twenty classes, drawn as one picture. Drag it around and zoom in on the part you care about — the three states and their phases, or the payment layer behind <code style="font-family:var(--font-mono)">PaymentMethod</code>.</p>
-  </div>
-  <div class="card">
-    <div class="bd">
-      <div class="dgm" id="dgmFrame">
-        <div class="dgm-stage" id="dgmStage">
-<pre class="mermaid">
-classDiagram
-    class VendingMachine {
-        -Inventory inventory
-        -PaymentGateway paymentGateway
-        -Clock clock
-        -AtomicReference~State~ state
-        +showItems() List~ItemView~
-        +selectItem(String code) void
-        +insertMoney(int amount) void
-        +dispense() DispenseResult
-        +swipeCard(Card card) PurchaseResult
-        +cancel() int
-        -expireStaleClaim() void
-        -orphaned(PaymentResult charged) PurchaseResult
-    }
-
-    class State {
-        &lt;&lt;interface&gt;&gt;
-        +deniedMessage() String
-        +selectItem(String code, Inventory inventory) Transition~Void~
-        +insertMoney(int amount) Transition~Void~
-        +cancel() Transition~Integer~
-        +beginCardPayment(Card card, Instant startedAt, String attemptId) Transition~Void~
-        +authorizeCash() PaymentResult
-        +authorizeCard(PaymentGateway gateway) PaymentResult
-        +nextStateFor(PaymentResult result) State
-        +releaseItem(Approved approved) DispenseResult
-        +isExpired(Instant now, Duration timeout) boolean
-    }
-
-    class IdleState {
-        +selectItem(String code, Inventory inventory) Transition~Void~
-        +cancel() Transition~Integer~
-    }
-
-    class ItemSelectedState {
-        -Slot slot
-        -int amountInserted
-        +insertMoney(int amount) Transition~Void~
-        +beginCardPayment(Card card, Instant startedAt, String attemptId) Transition~Void~
-        +authorizeCash() PaymentResult
-        +nextStateFor(PaymentResult result) State
-        +releaseItem(Approved approved) DispenseResult
-        +cancel() Transition~Integer~
-    }
-
-    class PaymentPendingState {
-        -Slot slot
-        -int amountInserted
-        -Card card
-        -Instant startedAt
-        -String attemptId
-        +authorizeCard(PaymentGateway gateway) PaymentResult
-        +nextStateFor(PaymentResult result) State
-        +releaseItem(Approved approved) DispenseResult
-        +isExpired(Instant now, Duration timeout) boolean
-        +attemptId() String
-    }
-
-    class Transition~T~ {
-        &lt;&lt;record&gt;&gt;
-        +State next
-        +T payload
-        +to(State next) Transition~Void~
-    }
-
-    class Inventory {
-        -Map~String, Slot~ slots
-        +addSlot(Slot) void
-        +getSlot(String code) Slot
-        +allSlots() Collection~Slot~
-    }
-
-    class Slot {
-        -String code
-        -Item item
-        -int quantity
-        +isEmpty() boolean
-        +reduceQuantity() void
-    }
-
-    class Item {
-        -String name
-        -int price
-    }
-
-    class ItemView {
-        &lt;&lt;record&gt;&gt;
-        +String slotCode
-        +String name
-        +int price
-        +boolean available
-    }
-
-    class DispenseResult {
-        &lt;&lt;record&gt;&gt;
-        +Item item
-        +int change
-    }
-
-    class PurchaseResult {
-        &lt;&lt;sealed&gt;&gt;
-        Dispensed(Item item, int change, String reference)
-        Declined(String reason)
-        Busy(String reason)
-    }
-
-    class PaymentMethod {
-        &lt;&lt;interface&gt;&gt;
-        +authorize(int amount) PaymentResult
-    }
-
-    class CashPayment {
-        -int amountInserted
-    }
-
-    class CardPayment {
-        -Card card
-        -PaymentGateway gateway
-        -String idempotencyKey
-    }
-
-    class PaymentGateway {
-        &lt;&lt;interface&gt;&gt;
-        +charge(Card card, int amount, String idempotencyKey) PaymentResult
-    }
-
-    class CardsNotAcceptedGateway {
-        +charge(Card card, int amount, String idempotencyKey) PaymentResult
-    }
-
-    class PaymentResult {
-        &lt;&lt;sealed&gt;&gt;
-        Approved(int change, String reference)
-        Declined(String reason)
-    }
-
-    State &lt;|.. IdleState : implements
-    State &lt;|.. ItemSelectedState : implements
-    State &lt;|.. PaymentPendingState : implements
-    PaymentMethod &lt;|.. CashPayment : implements
-    PaymentMethod &lt;|.. CardPayment : implements
-    PaymentGateway &lt;|.. CardsNotAcceptedGateway : implements
-
-    VendingMachine o-- State : atomic reference
-    VendingMachine *-- Inventory : owns
-    VendingMachine --&gt; PaymentGateway : injected
-    VendingMachine --&gt; Clock : injected
-    VendingMachine ..&gt; Transition : reads
-    VendingMachine ..&gt; ItemView : shows
-    VendingMachine ..&gt; PurchaseResult : returns
-    State ..&gt; Transition : returns
-    Inventory &quot;1&quot; *-- &quot;0..*&quot; Slot : owns
-    Slot --&gt; Item : holds
-    ItemView ..&gt; Slot : projected from
-    ItemSelectedState --&gt; Slot : payload
-    ItemSelectedState ..&gt; CashPayment : authorizeCash
-    ItemSelectedState ..&gt; PaymentPendingState : claim
-    PaymentPendingState --&gt; Card : claim payload
-    PaymentPendingState ..&gt; CardPayment : authorizeCard
-    CardPayment --&gt; PaymentGateway : delegates
-    PaymentMethod ..&gt; PaymentResult : returns
-</pre>
-        </div>
-        <span class="dgm-zoom" id="dgmZoom">100%</span>
-        <span class="dgm-hint">drag to pan · scroll or pinch to zoom · double-click to fit</span>
-        <div class="dgm-ctl">
-          <button type="button" data-zoom="out" aria-label="Zoom out">−</button>
-          <button type="button" data-zoom="in" aria-label="Zoom in">+</button>
-          <button type="button" class="wide" data-zoom="fit">FIT</button>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <footer>
   <p>
     Built as an interview exercise: one version per commit, each solving a problem the last one
     caused. The Java lives in <code>com.vendingmachine</code> with 59 JUnit tests; the long-form
-    write-up is <code>VendingMachine.md</code>. V4 (concurrency) and V5 (coin float, refills,
-    transaction log) are still to come.
+    write-up is <code>VendingMachine.md</code>, which lists what is still missing as open
+    questions - a transaction log first, then the coin float.
   </p>
 </footer>
 </div>
@@ -847,20 +625,6 @@ classDiagram
         ["cost", "~", "Cancel is refused mid-charge", "Until the gateway answers, nobody knows if the card was charged, so the claim is held and the cash is stuck until the timeout."],
         ["broke", "!", "Nothing is recorded", "An abandoned claim and a charge that lands too late both owe the customer money, and there is nowhere to write that down."]
       ]
-    },
-    {
-      id: "V5", name: "Production", tag: "not built yet", future: true,
-      title: "V5 \u2014 production concerns",
-      guards: true, card: true, payload: true, pending: true, claim: true,
-      guardCount: 0, guardLabel: "0 checks written",
-      guardNote: "Not implemented. This is where the coin float, the transaction log, refills and configuration arrive.",
-      snippet: "<span class='c'>// V1 assumed the float was infinite.</span>\n<span class='c'>// Four versions later it still does.</span>\n\n<span class='c'>// change can fail even when the</span>\n<span class='c'>// customer paid enough</span>",
-      notes: [
-        ["broke", "!", "Change is still a number", "V1's stated assumption has survived four versions. A real coin float means change can fail even when enough was paid."],
-        ["broke", "!", "No transaction log", "Both of V4's TODOs are the same missing thing: somewhere to record money the machine knows it may owe."],
-        ["cost", "~", "No operator at all", "Refills, price changes, cash collection and sales reports have never existed."],
-        ["cost", "~", "The timeout is a constant", "30 seconds, in code, the same for every machine on every network."]
-      ]
     }
   ];
 
@@ -868,7 +632,7 @@ classDiagram
     ["broke", "×", "A Payment class in V1", "Money was a single whole number. The class would have held one integer and added one subtraction."],
     ["broke", "×", "A TransitionRules class in V2b", "It would have wrapped a single map. The rules went on the state instead."],
     ["broke", "×", "A context callback in V2c", "A state holding the machine could call any method on it, including cancel() from inside dispense()."],
-    ["broke", "×", "A MachineContext in V2c", "With one dependency it was indirection for its own sake. V3 added a second, and V5 adds a third - then it earns it."],
+    ["broke", "×", "A MachineContext in V2c", "With one dependency it was indirection for its own sake. V3 added a second, and a coin float would add a third - then it earns it."],
     ["broke", "×", "PaymentPendingState in V3", "With a blocking call it lasts microseconds inside one method. No caller can reach it until there are threads."]
   ];
 
@@ -1479,123 +1243,5 @@ classDiagram
   selectVersion(VERSIONS[0]);
   logEl.innerHTML = "";
   log("k", "V1: no rules yet. Try DISPENSE without paying.");
-/* ---------- pan and zoom for the class diagram ---------- */
-  function makeZoomable(frameId, stageId, readout) {
-    var frame = document.getElementById(frameId);
-    var stage = document.getElementById(stageId);
-    if (!frame || !stage) { return null; }
-
-    var z = 1, tx = 0, ty = 0, dragging = false, lastX = 0, lastY = 0;
-    var pointers = new Map();
-    var pinchFrom = 0, pinchZoom = 1;
-
-    function apply() {
-      stage.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + z + ")";
-      if (readout) {
-        var out = document.getElementById(readout);
-        if (out) { out.textContent = Math.round(z * 100) + "%"; }
-      }
-    }
-
-    /* zoom about a point, so the thing under the cursor stays under the cursor */
-    function zoomAt(factor, px, py) {
-      var next = Math.min(4, Math.max(0.3, z * factor));
-      if (next === z) { return; }
-      tx = px - (px - tx) * (next / z);
-      ty = py - (py - ty) * (next / z);
-      z = next;
-      apply();
-    }
-
-    function fit() {
-      var svg = stage.querySelector("svg");
-      /* measure at the CURRENT scale, then divide it out - resetting z first
-         would measure against a transform that has not been applied yet */
-      var natural = svg ? svg.getBoundingClientRect().width / z : 0;
-      tx = 0;
-      ty = 0;
-      z = 1;
-      var room = frame.clientWidth - 36;
-      if (natural > 0 && room > 0) { z = Math.min(1, room / natural); }
-      apply();
-    }
-
-    frame.addEventListener("wheel", function (e) {
-      e.preventDefault();
-      var r = frame.getBoundingClientRect();
-      zoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - r.left, e.clientY - r.top);
-    }, { passive: false });
-
-    stage.addEventListener("pointerdown", function (e) {
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (pointers.size === 1) {
-        dragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        stage.classList.add("drag");
-        stage.setPointerCapture(e.pointerId);
-      } else if (pointers.size === 2) {
-        dragging = false;
-        var p = Array.from(pointers.values());
-        pinchFrom = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
-        pinchZoom = z;
-      }
-    });
-
-    stage.addEventListener("pointermove", function (e) {
-      if (!pointers.has(e.pointerId)) { return; }
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-      if (pointers.size === 2 && pinchFrom > 0) {
-        var p = Array.from(pointers.values());
-        var now = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
-        var r = frame.getBoundingClientRect();
-        var midX = (p[0].x + p[1].x) / 2 - r.left, midY = (p[0].y + p[1].y) / 2 - r.top;
-        zoomAt((pinchZoom * (now / pinchFrom)) / z, midX, midY);
-        return;
-      }
-      if (!dragging) { return; }
-      tx += e.clientX - lastX;
-      ty += e.clientY - lastY;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      apply();
-    });
-
-    function release(e) {
-      pointers.delete(e.pointerId);
-      if (pointers.size < 2) { pinchFrom = 0; }
-      if (pointers.size === 0) { dragging = false; stage.classList.remove("drag"); }
-    }
-    stage.addEventListener("pointerup", release);
-    stage.addEventListener("pointercancel", release);
-    frame.addEventListener("dblclick", fit);
-
-    /* mermaid renders asynchronously, so fit once the svg actually lands */
-    var tries = 0;
-    var waiting = setInterval(function () {
-      tries += 1;
-      if (stage.querySelector("svg") || tries > 40) {
-        clearInterval(waiting);
-        fit();
-      }
-    }, 150);
-
-    apply();
-    return { zoomIn: function () { zoomAt(1.25, frame.clientWidth / 2, frame.clientHeight / 2); },
-             zoomOut: function () { zoomAt(1 / 1.25, frame.clientWidth / 2, frame.clientHeight / 2); },
-             fit: fit };
-  }
-
-  var zoomer = makeZoomable("dgmFrame", "dgmStage", "dgmZoom");
-  if (zoomer) {
-    Array.prototype.forEach.call(document.querySelectorAll("[data-zoom]"), function (b) {
-      b.onclick = function () {
-        if (b.dataset.zoom === "in") { zoomer.zoomIn(); }
-        else if (b.dataset.zoom === "out") { zoomer.zoomOut(); }
-        else { zoomer.fit(); }
-      };
-    });
-  }
 })();
 </script>
