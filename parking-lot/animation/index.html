@@ -1,0 +1,998 @@
+<title>Parking Lot, Eight Steps</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: step rail on top, garage floor plan beside its controls, lessons below */
+:root {
+  --bg: #eeeeec;
+  --surface: #fbfbfa;
+  --surface-2: #e4e4e1;
+  --ink: #1b1b19;
+  --ink-dim: #61615c;
+  --line: #cbcbc6;
+  --accent: #8a6a00;          /* parking-line yellow, as ink */
+  --free: #1d6f45;
+  --busy: #8a4b12;
+  --stop: #9c2227;
+
+  /* the garage is a physical place: same colours in both themes */
+  --deck: #45453f;
+  --deck-2: #373732;
+  --paint: #e8c54a;
+  --paint-dim: rgba(232, 197, 74, .34);
+  --bay: #51514a;
+  --bay-free: #2f6b4b;
+  --bay-busy: #6d4a1f;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 10px 26px rgba(0, 0, 0, .07);
+  --sign: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Source Sans 3", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15151a;
+    --surface: #1d1d22;
+    --surface-2: #26262c;
+    --ink: #ececf0;
+    --ink-dim: #9a9aa3;
+    --line: #33333a;
+    --accent: #e8c54a;
+    --free: #4cc086;
+    --busy: #e0a258;
+    --stop: #e8707a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 12px 30px rgba(0, 0, 0, .4);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15151a;
+  --surface: #1d1d22;
+  --surface-2: #26262c;
+  --ink: #ececf0;
+  --ink-dim: #9a9aa3;
+  --line: #33333a;
+  --accent: #e8c54a;
+  --free: #4cc086;
+  --busy: #e0a258;
+  --stop: #e8707a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 12px 30px rgba(0, 0, 0, .4);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--body); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1160px; margin: 0 auto; padding-inline: 18px; padding-block: 26px 56px; }
+h1, h2, h3 { font-family: var(--sign); font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: .005em; }
+h1 { font-size: clamp(34px, 6vw, 56px); line-height: .98; text-transform: uppercase; }
+h2 { font-size: clamp(22px, 3vw, 30px); text-transform: uppercase; }
+h3 { font-size: 17px; text-transform: uppercase; letter-spacing: .03em; }
+p { margin: 0; }
+.eyebrow { font-family: var(--mono); font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-dim); }
+.lede { color: var(--ink-dim); max-width: 64ch; font-size: 16px; }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+header { display: grid; gap: 12px; margin-bottom: 22px; }
+.hrule { height: 5px; border-radius: 2px; background: repeating-linear-gradient(90deg, var(--accent) 0 26px, transparent 26px 44px); }
+
+/* ---------- step rail ---------- */
+.rail { display: flex; gap: 7px; overflow-x: auto; padding-block: 4px; margin-bottom: 18px; }
+.sbtn {
+  flex: 1 0 auto; min-width: 118px; cursor: pointer; text-align: left;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 11px; font: inherit; display: grid; gap: 0;
+  transition: border-color .16s, transform .16s, background .16s;
+}
+.sbtn:hover { border-color: var(--accent); transform: translateY(-1px); }
+.sbtn .sid { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; color: var(--ink-dim); }
+.sbtn .sname { font-family: var(--sign); font-weight: 600; font-size: 15px; line-height: 1.2; text-transform: uppercase; }
+.sbtn[aria-selected="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); box-shadow: inset 0 0 0 1px var(--accent); }
+.sbtn[aria-selected="true"] .sid { color: var(--accent); }
+.sbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); min-width: 0; }
+.card > .hd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+.card > .bd { padding: 14px; }
+
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 310px); gap: 18px; align-items: start; }
+@media (max-width: 900px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- the garage ---------- */
+.garage {
+  background: linear-gradient(180deg, var(--deck) 0%, var(--deck-2) 100%);
+  border: 1px solid #2b2b27; border-radius: 12px; padding: 13px;
+  display: grid; gap: 11px; position: relative; overflow: hidden;
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+.gatebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.gate {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+  color: #c9c9c0; background: rgba(0, 0, 0, .26); border: 1px solid #55554d;
+  border-radius: 6px; padding: 5px 9px;
+}
+.gate.live { border-color: var(--paint); color: var(--paint); }
+.boom { width: 26px; height: 3px; background: var(--paint); border-radius: 2px; transform-origin: left center; transition: transform .45s ease; }
+.boom.up { transform: rotate(-62deg); }
+
+.floor { border: 1px dashed #5c5c54; border-radius: 9px; padding: 9px; display: grid; gap: 8px; }
+.floorhd { display: flex; align-items: center; justify-content: space-between; font-family: var(--sign); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #cfcfc6; }
+.floorhd span.cnt { font-family: var(--mono); font-size: 10.5px; color: #9a9a90; letter-spacing: .04em; }
+.bays { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; }
+.bay {
+  position: relative; border-radius: 6px; padding: 7px 8px 8px;
+  background: var(--bay); border: 1px solid #5f5f57;
+  border-left: 3px solid var(--paint-dim);
+  display: grid; gap: 3px; min-height: 68px; align-content: start;
+  transition: background .3s, border-color .3s, box-shadow .3s;
+}
+.bay.free { background: color-mix(in srgb, var(--bay-free) 34%, var(--bay)); }
+.bay.busy { background: color-mix(in srgb, var(--bay-busy) 42%, var(--bay)); border-left-color: var(--paint); }
+.bay.cand { box-shadow: 0 0 0 2px var(--paint), 0 0 14px rgba(232, 197, 74, .35); }
+.bay.won { box-shadow: 0 0 0 2px #7ad6a4, 0 0 16px rgba(122, 214, 164, .4); }
+.bay .no { font-family: var(--mono); font-size: 10.5px; color: #e6e6dd; letter-spacing: .03em; }
+.bay .ty { font-family: var(--mono); font-size: 9.5px; color: #adada3; }
+.bay .dist { font-family: var(--mono); font-size: 9px; color: var(--paint); letter-spacing: .05em; }
+.bay .veh { font-size: 17px; line-height: 1; margin-top: 1px; }
+.bay .rank {
+  position: absolute; top: 5px; right: 6px; font-family: var(--mono); font-size: 9px;
+  color: #1b1b19; background: var(--paint); border-radius: 3px; padding: 0 3px;
+}
+
+#driver {
+  position: absolute; left: 0; top: 0; font-size: 21px; pointer-events: none;
+  opacity: 0; transition: transform .85s cubic-bezier(.4, .1, .3, 1), opacity .25s;
+  z-index: 3; filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .5));
+}
+
+/* ---------- controls ---------- */
+.ctl { display: grid; gap: 13px; }
+.grp { display: grid; gap: 6px; }
+.grp > .lab { font-family: var(--mono); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-dim); }
+.opts { display: flex; flex-wrap: wrap; gap: 5px; }
+.opt {
+  cursor: pointer; font: 500 12.5px var(--body); background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px;
+  transition: border-color .15s, background .15s;
+}
+.opt:hover { border-color: var(--accent); }
+.opt[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--surface)); font-weight: 600; }
+.opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.opt:disabled { opacity: .4; cursor: not-allowed; }
+
+.act { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.btn {
+  cursor: pointer; font: 600 13.5px var(--sign); letter-spacing: .06em; text-transform: uppercase;
+  background: var(--accent); color: var(--bg); border: 0; border-radius: 7px; padding: 9px 12px;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn.wide { grid-column: span 2; }
+
+/* ticket slip */
+.slip {
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px;
+  border-top: 3px solid var(--accent); padding: 9px 10px;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.7; color: var(--ink);
+  display: grid; gap: 1px; position: relative;
+}
+.slip.in { animation: slipin .45s cubic-bezier(.2, 1.2, .4, 1); }
+@keyframes slipin { from { transform: translateY(-14px) rotate(-1.5deg); opacity: 0; } }
+.slip .t { font-family: var(--sign); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 3px; }
+.slip b { font-weight: 500; }
+.slip .amt { font-family: var(--sign); font-size: 25px; letter-spacing: .01em; color: var(--ink); }
+.slip .dash { border-top: 1px dashed var(--line); margin: 4px 0; }
+
+.clock { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
+.clock b { font-family: var(--sign); font-size: 20px; color: var(--ink); letter-spacing: .02em; }
+
+.log { font-family: var(--mono); font-size: 11.5px; line-height: 1.55; display: grid; gap: 3px; max-height: 210px; overflow-y: auto; min-width: 0; }
+.log p { display: grid; grid-template-columns: 14px 1fr; gap: 7px; word-break: break-word; }
+.log .ok { color: var(--free); } .log .no { color: var(--stop); } .log .wn { color: var(--busy); } .log .k { color: var(--ink-dim); }
+.log p.fresh { animation: slide .28s ease-out; }
+@keyframes slide { from { opacity: 0; transform: translateX(-5px); } }
+
+.notes { display: grid; gap: 9px; }
+.note { display: grid; grid-template-columns: 20px 1fr; gap: 9px; align-items: start; }
+.note .ic { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; font-family: var(--mono); font-size: 11px; margin-top: 2px; }
+.note.won .ic { background: color-mix(in srgb, var(--free) 16%, transparent); color: var(--free); }
+.note.cost .ic { background: color-mix(in srgb, var(--busy) 18%, transparent); color: var(--busy); }
+.note.broke .ic { background: color-mix(in srgb, var(--stop) 15%, transparent); color: var(--stop); }
+.note b { font-weight: 600; } .note span { color: var(--ink-dim); }
+
+.code {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.62; white-space: pre; overflow-x: auto;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px;
+}
+.code .c { color: var(--ink-dim); } .code .r { color: var(--stop); } .code .g { color: var(--free); }
+
+section.block { margin-top: 36px; }
+.sechd { display: grid; gap: 5px; margin-bottom: 14px; }
+.sechd p { color: var(--ink-dim); max-width: 66ch; }
+
+/* fee bench */
+.bench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 760px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+.feerow { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; }
+.feerow:last-child { border-bottom: 0; }
+.feerow .want { color: var(--free); }
+.feerow .got { color: var(--stop); font-weight: 500; }
+.feerow .got.same { color: var(--ink-dim); font-weight: 400; }
+.pill { font-family: var(--mono); font-size: 10px; letter-spacing: .07em; border: 1px solid currentColor; border-radius: 99px; padding: 1px 7px; }
+.pill.bad { color: var(--stop); } .pill.good { color: var(--free); }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+
+/* race */
+.lane { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px; align-items: center; margin-bottom: 9px; }
+.lane .who { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+.track { position: relative; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); overflow: hidden; }
+.mark { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); }
+.mark b { position: absolute; top: 2px; left: 5px; font-family: var(--mono); font-size: 9px; color: var(--ink-dim); white-space: nowrap; font-weight: 400; }
+.runner { position: absolute; top: 7px; left: 0; height: 19px; display: grid; place-items: center; padding: 0 8px; border-radius: 5px; font-family: var(--mono); font-size: 10px; white-space: nowrap; background: var(--accent); color: var(--bg); transition: left .9s linear, background .3s; }
+.runner.bad { background: var(--stop); color: #fff; }
+.runner.ok { background: var(--free); color: #fff; }
+.verdict { font-family: var(--mono); font-size: 12px; padding: 10px 12px; border-radius: 8px; border: 1px dashed var(--line); color: var(--ink-dim); min-height: 42px; }
+.verdict.bad { border-style: solid; border-color: var(--stop); color: var(--stop); }
+.verdict.good { border-style: solid; border-color: var(--free); color: var(--free); }
+
+footer { margin-top: 42px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; }
+footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001s !important; transition-duration: .001s !important; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Low level design · one requirement at a time</p>
+  <h1>Parking Lot, Eight Steps</h1>
+  <div class="hrule" aria-hidden="true"></div>
+  <p class="lede">
+    A garage built by adding <strong>one requirement at a time</strong>, and introducing an
+    abstraction only when that requirement forces it. Park a vehicle, advance the clock, take it
+    out — then change step and watch what the design can suddenly do.
+  </p>
+</header>
+
+<div class="rail" role="tablist" aria-label="Build step"></div>
+
+<div class="stage">
+
+  <div style="display:grid; gap:18px; min-width:0;">
+    <div class="garage" id="garage">
+      <div class="gatebar">
+        <div class="gate live" id="gateIn"><span>G1 · ENTRY</span><span class="boom" id="boomIn" aria-hidden="true"></span></div>
+        <div class="gate" id="gateOut"><span class="boom" id="boomOut" aria-hidden="true"></span><span>G2 · EXIT</span></div>
+      </div>
+      <div id="floors" style="display:grid; gap:10px;"></div>
+      <div id="driver" aria-hidden="true">🚗</div>
+    </div>
+
+    <div class="card">
+      <div class="hd"><h3 id="stepTitle">Step 1 — core domain</h3><span class="eyebrow" id="stepTag"></span></div>
+      <div class="bd" style="display:grid; gap:13px;">
+        <div class="bench" style="gap:14px">
+          <div style="min-width:0; display:grid; gap:7px; align-content:start">
+            <p class="eyebrow">What happened</p>
+            <div class="log" id="log"></div>
+          </div>
+          <div style="min-width:0; display:grid; gap:7px; align-content:start">
+            <p class="eyebrow">What this step added</p>
+            <div class="notes" id="notes"></div>
+          </div>
+        </div>
+        <div class="code" id="snippet"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ctl">
+    <div class="card">
+      <div class="hd"><h3>Gate controls</h3></div>
+      <div class="bd ctl">
+
+        <div class="grp" id="grpVeh">
+          <span class="lab">Vehicle</span>
+          <div class="opts" id="vehOpts"></div>
+        </div>
+
+        <div class="grp" id="grpGate" hidden>
+          <span class="lab">Gate used</span>
+          <div class="opts" id="gateOpts"></div>
+        </div>
+
+        <div class="grp" id="grpPlan" hidden>
+          <span class="lab">Rate plan</span>
+          <div class="opts" id="planOpts"></div>
+        </div>
+
+        <div class="grp" id="grpStrat" hidden>
+          <span class="lab">Allocation strategy</span>
+          <div class="opts" id="stratOpts"></div>
+        </div>
+
+        <div class="grp" id="grpClock" hidden>
+          <span class="lab">Clock</span>
+          <div class="clock"><b id="clockOut">0m</b><span>since entry</span></div>
+          <div class="opts" id="clockOpts"></div>
+        </div>
+
+        <div class="act">
+          <button class="btn wide" id="bPark">Park</button>
+          <button class="btn ghost" id="bUnpark">Exit</button>
+          <button class="btn ghost" id="bReset">Reset</button>
+        </div>
+
+        <div id="slipHost" style="display:grid; gap:8px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section class="block">
+  <div class="sechd">
+    <p class="eyebrow">Step 5 · the bug that appeared three times</p>
+    <h2>Ceiling a division</h2>
+    <p>
+      Both fee calculators round part-periods up. Each one got that wrong first, in a different
+      way — and the daily one got it wrong in a line that visibly contains
+      <code style="font-family:var(--mono)">Math.ceil</code>. Drag the stay and compare.
+    </p>
+  </div>
+  <div class="card">
+    <div class="bd" style="display:grid; gap:14px;">
+      <div>
+        <div class="clock" style="margin-bottom:6px"><b id="benchLabel">2h 00m</b><span>parked</span></div>
+        <input type="range" id="benchRange" min="5" max="4320" value="2850" step="1" aria-label="Minutes parked">
+      </div>
+      <div class="bench">
+        <div>
+          <p class="eyebrow" style="margin-bottom:7px">Hourly · 20 per hour</p>
+          <div id="hourRows"></div>
+        </div>
+        <div>
+          <p class="eyebrow" style="margin-bottom:7px">Daily · 300 per day</p>
+          <div id="dayRows"></div>
+        </div>
+      </div>
+      <div class="code" id="benchCode"></div>
+      <p style="color:var(--ink-dim); font-size:13px; max-width:68ch;">
+        The third form is the nastiest: without the <code style="font-family:var(--mono)">(double)</code>
+        cast the division is integer division, so it truncates <em>before</em>
+        <code style="font-family:var(--mono)">Math.ceil</code> ever runs. The hourly calculator only
+        escapes it because <code style="font-family:var(--mono)">60.0</code> is a double literal.
+        In any ceiling of a division, check that the division itself is floating point.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="sechd">
+    <p class="eyebrow">Step 7 · two threads, one spot</p>
+    <h2>Find, then claim</h2>
+    <p>
+      Two gates admit cars in the same instant. The old entry path searched for a free spot and
+      then occupied it — two separate calls, with a gap in between.
+    </p>
+  </div>
+  <div class="card">
+    <div class="bd" style="display:grid; gap:14px;">
+      <div class="opts">
+        <button class="opt" id="raceOld" aria-pressed="true">findFreeSpot, then occupy</button>
+        <button class="opt" id="raceNew" aria-pressed="false">claimFreeSpot (one call, CAS)</button>
+      </div>
+      <div>
+        <div class="lane"><span class="who">gate G1</span><div class="track" id="trackA"><div class="runner" id="runA">A</div></div></div>
+        <div class="lane"><span class="who">gate G2</span><div class="track" id="trackB"><div class="runner" id="runB">B</div></div></div>
+      </div>
+      <div class="verdict" id="raceVerdict">One free spot left: P1-S1. Press play.</div>
+      <div class="opts">
+        <button class="btn" id="racePlay">Run both gates</button>
+        <button class="btn ghost" id="raceReset">Reset</button>
+      </div>
+      <div class="code" id="raceCode"></div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="sechd">
+    <p class="eyebrow">Step 7 · the lesson worth keeping</p>
+    <h2>What the boolean means</h2>
+    <p>
+      <code style="font-family:var(--mono)">compareAndSet</code> answers “did I win”, not “was it
+      already that value”. Getting that backwards in <code style="font-family:var(--mono)">free()</code>
+      did more damage than a crash.
+    </p>
+  </div>
+  <div class="card">
+    <div class="bd" style="display:grid; gap:12px;">
+      <div class="bench">
+        <div style="display:grid; gap:7px">
+          <span class="pill bad">first attempt</span>
+          <div class="code"><span class="r">if (occupied.compareAndSet(true, false)) {</span>
+<span class="r">    throw new IllegalStateException(</span>
+<span class="r">        "Parking spot is already free");</span>
+<span class="r">}</span>
+<span class="c">// throws on every SUCCESSFUL release,</span>
+<span class="c">// and stays silent when it really was free</span></div>
+        </div>
+        <div style="display:grid; gap:7px">
+          <span class="pill good">fixed</span>
+          <div class="code"><span class="g">if (!occupied.compareAndSet(true, false)) {</span>
+<span class="g">    throw new IllegalStateException(</span>
+<span class="g">        "Parking spot is already free");</span>
+<span class="g">}</span>
+<span class="c">// losing a race for a spot is normal, so</span>
+<span class="c">// tryOccupy returns boolean; freeing an</span>
+<span class="c">// unheld spot is broken, so free() throws</span></div>
+        </div>
+      </div>
+      <div class="verdict bad" style="border-style:solid">
+        In <code style="font-family:var(--mono)">unpark</code> the spot was released <em>and</em> the exception
+        propagated, so <code style="font-family:var(--mono)">ticketRepository.remove</code> never ran.
+        Spot free, ticket still valid, driver handed a stack trace instead of a receipt — and
+        presenting the same ticket again issued a second receipt for a car that had already left.
+        15 of 51 tests caught it.
+      </div>
+      <p style="color:var(--ink-dim); font-size:13px; max-width:68ch;">
+        Two more fixes followed from the same change. Lombok's class-level
+        <code style="font-family:var(--mono)">@Getter</code> had generated
+        <code style="font-family:var(--mono)">getOccupied()</code> returning the
+        <code style="font-family:var(--mono)">AtomicBoolean</code> itself, so any caller could
+        release any spot — a field's type changed and the public API silently widened to match.
+        And <code style="font-family:var(--mono)">claimFreeSpot</code> had been claiming inside a
+        stream <code style="font-family:var(--mono)">filter</code>, which is correct only because
+        sequential streams are lazy. A side effect inside a predicate is a predicate that lies.
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>
+    Built one requirement at a time: core domain, vehicle sizes, gates, floors, pricing,
+    pluggable allocation, then concurrency. The Java lives in <code>com.parkinglot</code> with 82
+    JUnit tests, including two stress tests that release 200 drivers at 50 spots; the long-form
+    write-up is <code>ParkingLot.md</code>. Rates and the clock on this page are illustrative.
+  </p>
+</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var SIZES = { SMALL: { icon: "🏍️", label: "Bike" }, MEDIUM: { icon: "🚗", label: "Car" }, LARGE: { icon: "🚛", label: "Truck" } };
+  var HOURLY = 20, DAILY = 300;
+
+  /* ---------- steps ---------- */
+  var STEPS = [
+    {
+      id: "1", name: "Core domain", tag: "one level, one size, one gate",
+      title: "Step 1 — core domain",
+      sizes: false, gates: false, pricing: false, floors: 1, strategy: false,
+      snippet: "<span class='c'>// one level, every spot identical</span>\nParkingLot.findFreeSpot()\nParkingSpot.occupy()\nTicket(ticketId, spotNumber,\n       vehicleNumber, entryTime)",
+      notes: [
+        ["won", "+", "Spot, Vehicle, Ticket", "A ticket records which spot, which vehicle, and when. Nothing else yet."],
+        ["cost", "~", "Deliberately missing", "No floors, no sizes, no gates, no pricing, no allocation choice."],
+        ["broke", "!", "A truck fits in a bike bay", "Every spot accepts every vehicle, because there is only one kind of spot."]
+      ]
+    },
+    {
+      id: "2", name: "Vehicle sizes", tag: "a spot decides what it accepts",
+      title: "Step 2 — vehicle sizes",
+      sizes: true, gates: false, pricing: false, floors: 1, strategy: false,
+      snippet: "<span class='g'>SMALL(Set.of(VehicleType.SMALL)),</span>\n<span class='g'>MEDIUM(Set.of(VehicleType.MEDIUM)),</span>\n<span class='g'>LARGE(Set.of(VehicleType.LARGE));</span>\n\n<span class='c'>// the spot type answers the question,</span>\n<span class='c'>// so no caller compares sizes</span>",
+      notes: [
+        ["won", "+", "SpotType.accepts(vehicleType)", "The rule lives on the type, not in an if at every call site. Widening it later (a bike in a car bay) is one line, in one place."],
+        ["won", "+", "Vehicles get turned away", "A truck now gets no spot rather than the wrong spot."],
+        ["broke", "!", "One gate, no pricing", "A real garage has several gates and charges money."]
+      ]
+    },
+    {
+      id: "3", name: "Gates", tag: "entry and exit are not interchangeable",
+      title: "Step 3 — multiple entry and exit gates",
+      sizes: true, gates: true, pricing: false, floors: 1, strategy: false,
+      snippet: "<span class='c'>// a ticket records where you came in</span>\nTicket(..., gateNo, ...)\n\n<span class='r'>// using an EXIT gate to park throws:</span>\n<span class='r'>// the caller wired it up wrong</span>\nrequireGateType(gate, GateType.ENTRY)",
+      notes: [
+        ["won", "+", "The gate is on the ticket", "Which gate admitted the vehicle is a fact worth recording, not a parameter to discard."],
+        ["won", "+", "Wrong gate type throws", "Parking at an exit gate is a programming mistake, not a thing a driver can do. A full lot returns empty; a miswired gate throws."],
+        ["cost", "~", "Two shapes in one API", "Worth being able to explain: Optional.empty for an expected outcome, an exception for a broken caller."]
+      ]
+    },
+    {
+      id: "4", name: "Floors", tag: "the lot stops owning spots",
+      title: "Step 4 — multiple floors",
+      sizes: true, gates: true, pricing: false, floors: 2, strategy: false,
+      snippet: "<span class='c'>// ParkingLot asks its floors;</span>\n<span class='c'>// a floor owns its own spots</span>\nfloors.stream()\n      .flatMap(f -&gt; f.freeSpotsFor(type).stream())\n      .toList()",
+      notes: [
+        ["won", "+", "ParkingFloor appears", "The lot delegates instead of holding a flat list. Each floor builds and numbers its own spots: P1-S1, P1-S2."],
+        ["won", "+", "Spot numbers carry their floor", "A ticket's spot number is enough to find the spot again, with no extra lookup."],
+        ["broke", "!", "Still free of charge", "Nobody pays anything yet."]
+      ]
+    },
+    {
+      id: "5", name: "Pricing", tag: "two schemes behind one interface",
+      title: "Step 5 — two pricing schemes",
+      sizes: true, gates: true, pricing: true, floors: 2, strategy: false,
+      snippet: "<span class='c'>// the plan is chosen at entry and</span>\n<span class='c'>// recorded on the ticket</span>\nTicket(..., RatePlan ratePlan)\n\nfeeCalculators.get(ticket.ratePlan())\n              .calculate(ticket, exitTime)",
+      notes: [
+        ["won", "+", "FeeCalculator, two implementations", "Hourly and daily. The service holds a map from plan to calculator and never switches on the plan itself."],
+        ["won", "+", "The plan is fixed at entry", "Recorded on the ticket, so a driver cannot be re-priced on the way out."],
+        ["won", "+", "Missing calculator fails at startup", "The constructor refuses a map that does not cover every RatePlan — a wiring mistake, caught before any driver arrives."],
+        ["broke", "!", "Rounding went wrong three times", "See the bench below. Part-hours and part-days must round up, and each calculator got that wrong differently."]
+      ]
+    },
+    {
+      id: "6", name: "Allocation", tag: "which free spot, and who decides",
+      title: "Step 6 — pluggable allocation",
+      sizes: true, gates: true, pricing: true, floors: 2, strategy: true,
+      snippet: "<span class='c'>// the lot gathers candidates;</span>\n<span class='c'>// the strategy picks and claims</span>\nallocationStrategy.claimFrom(candidates)\n\n<span class='g'>FirstAvailableStrategy  // in order</span>\n<span class='g'>NearestToEntranceStrategy // by distance</span>",
+      notes: [
+        ["won", "+", "SpotAllocationStrategy", "The lot finds candidates; the strategy chooses. Adding “spread load across floors” is a new class, not an edit."],
+        ["won", "+", "Distance becomes data", "Each spot knows its distance from the entrance, so the nearest-first rule is a sort rather than a special case."],
+        ["cost", "~", "The strategy also claims", "claimFrom, not pickFrom. Choosing and taking must be one act, which matters enormously in the next step."]
+      ]
+    },
+    {
+      id: "7", name: "Concurrency", tag: "find and claim become one act",
+      title: "Step 7 — two threads, one spot",
+      sizes: true, gates: true, pricing: true, floors: 2, strategy: true, cas: true,
+      snippet: "<span class='r'>// before: a gap between the two calls</span>\n<span class='r'>findFreeSpot(type)  // A and B see P1-S1</span>\n<span class='r'>spot.occupy()       // both proceed</span>\n\n<span class='g'>// after: nothing to race in</span>\n<span class='g'>claimFreeSpot(type) // CAS inside</span>",
+      notes: [
+        ["won", "+", "AtomicBoolean + compareAndSet", "The read-check-write gap closes in hardware. A synchronized floor would also be correct; locking the whole lot would serialise every gate in the building."],
+        ["won", "+", "findFreeSpot deleted from the entry path", "The structural half, and the more important half. With no read-then-act route into park, there is no gap to race in."],
+        ["won", "+", "ConcurrentHashMap for tickets", "The race that actually fired in testing was the ticket one, not the spot one — a driver holding a printed ticket the system had no record of."],
+        ["broke", "!", "The CAS boolean was read backwards", "See below. It threw on every successful release, which was worse than a crash."]
+      ]
+    },
+    {
+      id: "8", name: "As built", tag: "82 tests, all of it together",
+      title: "Step 8 — the finished design",
+      sizes: true, gates: true, pricing: true, floors: 2, strategy: true, cas: true, repo: true,
+      snippet: "<span class='c'>// domain  : Vehicle, ParkingSpot, ParkingFloor,</span>\n<span class='c'>//           ParkingLot, Ticket, Receipt</span>\n<span class='c'>// policies: FeeCalculator x2,</span>\n<span class='c'>//           SpotAllocationStrategy x2</span>\n<span class='c'>// service : ParkingLotService (park / unpark)</span>\n<span class='c'>// storage : TicketRepository</span>",
+      notes: [
+        ["won", "+", "Clock is injected", "Time is a dependency, so fee tests run instantly instead of sleeping."],
+        ["won", "+", "Policies are tested directly", "Pricing tests moved out of the service tests and onto the calculators, where a wrong amount names the real culprit."],
+        ["won", "+", "Immutable records at the edges", "Ticket and Receipt are records; the lot and floor copy their lists on the way in."],
+        ["cost", "~", "Still open", "Lost tickets, reserved bays, free first fifteen minutes, and a real database behind the repository."]
+      ]
+    }
+  ];
+
+  /* ---------- lot layout ---------- */
+  var LAYOUT = {
+    P1: [
+      { t: "SMALL", d: 1 }, { t: "MEDIUM", d: 2 }, { t: "MEDIUM", d: 4 },
+      { t: "LARGE", d: 7 }, { t: "SMALL", d: 9 }, { t: "MEDIUM", d: 12 }
+    ],
+    P2: [
+      { t: "MEDIUM", d: 3 }, { t: "LARGE", d: 5 }, { t: "SMALL", d: 8 }, { t: "MEDIUM", d: 11 }
+    ]
+  };
+
+  var step = STEPS[0];
+  var veh = "MEDIUM", gate = "G1", plan = "HOURLY", strat = "FIRST", minutes = 0;
+  var spots = [], parked = null, raceMode = "old";
+
+  var $ = function (id) { return document.getElementById(id); };
+  var logEl = $("log");
+
+  function reduced() { return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+
+  function log(kind, text) {
+    var marks = { ok: "✓", no: "✕", wn: "!", k: "·" };
+    var p = document.createElement("p");
+    p.className = "fresh";
+    p.innerHTML = '<span class="' + kind + '">' + (marks[kind] || "·") + '</span><span class="' + kind + '">' +
+      text.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</span>";
+    logEl.appendChild(p);
+    logEl.scrollTop = logEl.scrollHeight;
+    while (logEl.children.length > 40) { logEl.removeChild(logEl.firstChild); }
+  }
+
+  function buildSpots() {
+    spots = [];
+    var names = step.floors === 1 ? ["P1"] : ["P1", "P2"];
+    names.forEach(function (fl) {
+      LAYOUT[fl].forEach(function (s, i) {
+        spots.push({
+          no: fl + "-S" + (i + 1), floor: fl,
+          type: step.sizes ? s.t : "MEDIUM",
+          dist: s.d, occupied: false, by: null
+        });
+      });
+    });
+  }
+
+  /* ---------- rendering ---------- */
+  function renderFloors() {
+    var host = $("floors");
+    host.innerHTML = "";
+    var names = step.floors === 1 ? ["P1"] : ["P1", "P2"];
+    names.forEach(function (fl) {
+      var mine = spots.filter(function (s) { return s.floor === fl; });
+      var free = mine.filter(function (s) { return !s.occupied; }).length;
+      var div = document.createElement("div");
+      div.className = "floor";
+      var head = step.floors === 1 ? "Level" : "Level " + fl;
+      div.innerHTML = '<div class="floorhd"><span>' + head + '</span><span class="cnt">' + free + " of " + mine.length + " free</span></div>";
+      var bays = document.createElement("div");
+      bays.className = "bays";
+      mine.forEach(function (s) {
+        var b = document.createElement("div");
+        b.className = "bay " + (s.occupied ? "busy" : "free");
+        b.id = "bay-" + s.no;
+        var ty = step.sizes ? '<span class="ty">' + s.type.toLowerCase() + " only</span>" : '<span class="ty">any vehicle</span>';
+        var di = step.strategy ? '<span class="dist">' + s.dist + "m from gate</span>" : "";
+        b.innerHTML = '<span class="no">' + s.no + "</span>" + ty + di +
+          '<span class="veh">' + (s.by ? SIZES[s.by].icon : "") + "</span>";
+        bays.appendChild(b);
+      });
+      div.appendChild(bays);
+      host.appendChild(div);
+    });
+  }
+
+  function renderControls() {
+    $("grpGate").hidden = !step.gates;
+    $("grpPlan").hidden = !step.pricing;
+    $("grpStrat").hidden = !step.strategy;
+    $("grpClock").hidden = !step.pricing;
+
+    var vo = $("vehOpts");
+    vo.innerHTML = "";
+    Object.keys(SIZES).forEach(function (k) {
+      var b = document.createElement("button");
+      b.className = "opt";
+      b.setAttribute("aria-pressed", String(veh === k));
+      b.innerHTML = SIZES[k].icon + " " + SIZES[k].label;
+      b.disabled = !step.sizes && k !== "MEDIUM";
+      b.onclick = function () { veh = k; renderControls(); };
+      vo.appendChild(b);
+    });
+    if (!step.sizes) { veh = "MEDIUM"; }
+
+    opts($("gateOpts"), [["G1", "G1 entry"], ["G2", "G2 exit"]], gate, function (v) { gate = v; renderControls(); updateGates(); });
+    opts($("planOpts"), [["HOURLY", "Hourly 20"], ["DAILY", "Daily 300"]], plan, function (v) { plan = v; renderControls(); });
+    opts($("stratOpts"), [["FIRST", "First available"], ["NEAR", "Nearest to entrance"]], strat, function (v) {
+      strat = v; renderControls();
+      log("k", "allocation strategy = " + (v === "FIRST" ? "FirstAvailableStrategy" : "NearestToEntranceStrategy"));
+    });
+
+    var co = $("clockOpts");
+    co.innerHTML = "";
+    [["+30m", 30], ["+2h", 120], ["+26h", 26 * 60], ["+3d", 3 * 24 * 60]].forEach(function (pair) {
+      var b = document.createElement("button");
+      b.className = "opt";
+      b.textContent = pair[0];
+      b.onclick = function () { minutes += pair[1]; renderClock(); };
+      co.appendChild(b);
+    });
+    renderClock();
+    $("bUnpark").disabled = !parked;
+  }
+
+  function opts(host, list, current, onPick) {
+    host.innerHTML = "";
+    list.forEach(function (pair) {
+      var b = document.createElement("button");
+      b.className = "opt";
+      b.setAttribute("aria-pressed", String(current === pair[0]));
+      b.textContent = pair[1];
+      b.onclick = function () { onPick(pair[0]); };
+      host.appendChild(b);
+    });
+  }
+
+  function fmt(m) {
+    if (m < 60) { return m + "m"; }
+    if (m < 1440) { return Math.floor(m / 60) + "h " + String(m % 60).padStart(2, "0") + "m"; }
+    return Math.floor(m / 1440) + "d " + Math.floor((m % 1440) / 60) + "h";
+  }
+  function renderClock() { $("clockOut").textContent = fmt(minutes); }
+
+  function updateGates() {
+    $("gateIn").classList.toggle("live", !step.gates || gate === "G1");
+    $("gateOut").classList.toggle("live", step.gates && gate === "G2");
+  }
+
+  function boom(which) {
+    var el = $(which === "in" ? "boomIn" : "boomOut");
+    el.classList.add("up");
+    setTimeout(function () { el.classList.remove("up"); }, 1100);
+  }
+
+  function driveTo(bayId, icon, then) {
+    var d = $("driver"), bay = document.getElementById(bayId), g = $("garage");
+    if (!bay || reduced()) { if (then) { then(); } return; }
+    d.textContent = icon;
+    var gb = g.getBoundingClientRect(), bb = bay.getBoundingClientRect();
+    var startX = 18, startY = 6;
+    d.style.transition = "none";
+    d.style.transform = "translate(" + startX + "px," + startY + "px)";
+    d.style.opacity = "1";
+    void d.offsetWidth;
+    d.style.transition = "transform .85s cubic-bezier(.4,.1,.3,1), opacity .25s";
+    d.style.transform = "translate(" + (bb.left - gb.left + bb.width / 2 - 11) + "px," + (bb.top - gb.top + bb.height / 2 - 12) + "px)";
+    setTimeout(function () { d.style.opacity = "0"; if (then) { then(); } }, 880);
+  }
+
+  /* ---------- fees ---------- */
+  function hourlyFee(m, buggy) {
+    if (buggy) {
+      var h = Math.floor(m / 60);
+      if (h === 0) { h = 1; }            /* the first patch: only the under-one-hour case */
+      return h * HOURLY;
+    }
+    return Math.max(1, Math.ceil(m / 60.0)) * HOURLY;
+  }
+  function dailyFee(m, mode) {
+    if (mode === "toDays") {
+      return Math.max(1, Math.floor(m / 1440)) * DAILY;   /* toDays() truncates */
+    }
+    if (mode === "intDiv") {
+      return Math.max(1, Math.ceil(Math.floor(m / 1440))) * DAILY;  /* ceil after integer division */
+    }
+    return Math.max(1, Math.ceil(m / 1440)) * DAILY;
+  }
+
+  /* ---------- park / unpark ---------- */
+  function candidates() {
+    var list = spots.filter(function (s) { return !s.occupied && (!step.sizes || s.type === veh); });
+    if (step.strategy && strat === "NEAR") {
+      list = list.slice().sort(function (a, b) { return a.dist - b.dist; });
+    }
+    return list;
+  }
+
+  function park() {
+    if (step.gates && gate !== "G1") {
+      log("no", "requireGateType(G2, ENTRY) → IllegalArgumentException: G2 is an EXIT gate");
+      log("k", "a miswired gate is a programming mistake, so it throws rather than returning empty");
+      return;
+    }
+    if (parked) {
+      log("wn", "this demo tracks one vehicle at a time — take it out first");
+      return;
+    }
+    var list = candidates();
+    if (!list.length) {
+      log("no", "claimFreeSpot(" + veh + ") → Optional.empty() — no bay fits, the driver is turned away");
+      log("k", "a full lot is an expected outcome, so it is an empty Optional and not an exception");
+      return;
+    }
+    /* show the candidate ordering the strategy saw */
+    if (step.strategy) {
+      list.slice(0, 4).forEach(function (s, i) {
+        var b = document.getElementById("bay-" + s.no);
+        if (b) {
+          b.classList.add("cand");
+          var r = document.createElement("span");
+          r.className = "rank";
+          r.textContent = i + 1;
+          b.appendChild(r);
+        }
+      });
+      log("k", "candidates in order: " + list.slice(0, 4).map(function (s) { return s.no + (strat === "NEAR" ? " (" + s.dist + "m)" : ""); }).join(", "));
+    }
+    var chosen = list[0];
+    setTimeout(function () {
+      chosen.occupied = true;
+      chosen.by = veh;
+      parked = { spot: chosen.no, plan: plan, gate: step.gates ? gate : "G1", veh: veh };
+      minutes = 0;
+      boom("in");
+      driveTo("bay-" + chosen.no, SIZES[veh].icon, function () {
+        renderFloors(); renderControls();
+        printTicket();
+      });
+      if (reduced()) { renderFloors(); renderControls(); printTicket(); }
+      log("ok", (step.strategy ? "claimFrom(candidates)" : "claimFreeSpot(" + veh + ")") + " → " + chosen.no +
+        (step.sizes ? " (" + chosen.type.toLowerCase() + ")" : "") + (step.strategy ? ", " + chosen.dist + "m from the gate" : ""));
+      if (step.cas) { log("k", "tryOccupy() won the compare-and-set — the search and the claim were one call"); }
+    }, step.strategy && !reduced() ? 650 : 0);
+  }
+
+  function printTicket() {
+    var host = $("slipHost");
+    var p = parked;
+    host.innerHTML =
+      '<div class="slip in"><span class="t">Parking ticket</span>' +
+      "<span>spot <b>" + p.spot + "</b></span>" +
+      (step.gates ? "<span>gate <b>" + p.gate + "</b></span>" : "") +
+      "<span>vehicle <b>" + SIZES[p.veh].label.toLowerCase() + " KA-01-" + (1000 + Math.floor(Math.random() * 8999)) + "</b></span>" +
+      (step.pricing ? "<span>plan <b>" + p.plan.toLowerCase() + "</b></span>" : "") +
+      "<span>entry <b>00:00</b></span></div>";
+  }
+
+  function unpark() {
+    if (!parked) { return; }
+    if (step.gates && gate !== "G2") {
+      log("no", "requireGateType(" + gate + ", EXIT) → IllegalArgumentException: " + gate + " is an ENTRY gate");
+      return;
+    }
+    var p = parked, s = spots.filter(function (x) { return x.no === p.spot; })[0];
+    s.occupied = false; s.by = null;
+    parked = null;
+    boom("out");
+    var host = $("slipHost");
+    if (step.pricing) {
+      var fee = p.plan === "HOURLY" ? hourlyFee(minutes, false) : dailyFee(minutes, "ceil");
+      var units = p.plan === "HOURLY" ? Math.max(1, Math.ceil(minutes / 60)) : Math.max(1, Math.ceil(minutes / 1440));
+      host.innerHTML =
+        '<div class="slip in"><span class="t">Receipt</span>' +
+        "<span>spot <b>" + p.spot + "</b></span>" +
+        "<span>parked <b>" + fmt(minutes) + "</b></span>" +
+        "<span>" + (p.plan === "HOURLY" ? "hours" : "days") + " charged <b>" + units + "</b></span>" +
+        '<div class="dash"></div><span class="amt">' + fee + "</span></div>";
+      log("ok", "unpark() → " + fmt(minutes) + " → " + units + " " + (p.plan === "HOURLY" ? "hour" : "day") +
+        (units === 1 ? "" : "s") + " × " + (p.plan === "HOURLY" ? HOURLY : DAILY) + " = " + fee);
+      log("k", "part periods round up, and the minimum charge is one " + (p.plan === "HOURLY" ? "hour" : "day"));
+    } else {
+      host.innerHTML = "";
+      log("ok", "unpark() → " + p.spot + " released. No pricing until step 5.");
+    }
+    if (step.cas) { log("k", "free() CASes true→false, so nobody can release a bay they do not hold"); }
+    minutes = 0;
+    renderFloors(); renderControls();
+  }
+
+  /* ---------- step switching ---------- */
+  function renderNotes(list, host) {
+    host.innerHTML = "";
+    list.forEach(function (n) {
+      var d = document.createElement("div");
+      d.className = "note " + n[0];
+      d.innerHTML = '<span class="ic">' + n[1] + "</span><div><b>" + n[2] + "</b> <span>" + n[3] + "</span></div>";
+      host.appendChild(d);
+    });
+  }
+
+  function pickStep(s) {
+    step = s;
+    $("stepTitle").textContent = s.title;
+    $("stepTag").textContent = s.tag;
+    $("snippet").innerHTML = s.snippet;
+    renderNotes(s.notes, $("notes"));
+    Array.prototype.forEach.call(document.querySelectorAll(".sbtn"), function (b) {
+      b.setAttribute("aria-selected", String(b.dataset.s === s.id));
+    });
+    if (!s.gates) { gate = "G1"; }
+    parked = null; minutes = 0;
+    $("slipHost").innerHTML = "";
+    buildSpots(); renderFloors(); renderControls(); updateGates();
+    log("k", "—— step " + s.id + ": " + s.name.toLowerCase() + " ——");
+  }
+
+  /* ---------- fee bench ---------- */
+  function feeRow(label, want, got, note) {
+    var same = want === got;
+    return '<div class="feerow"><span>' + label + '</span><span class="want">' + want +
+      '</span><span class="got' + (same ? " same" : "") + '">' + (same ? "✓" : got) + "</span></div>" +
+      (note && !same ? '<div class="feerow" style="border:0;padding-top:0"><span style="color:var(--stop);font-size:11px">' + note + "</span><span></span><span></span></div>" : "");
+  }
+
+  function renderBench() {
+    var m = Number($("benchRange").value);
+    $("benchLabel").textContent = fmt(m);
+    var hCorrect = hourlyFee(m, false), hBug = hourlyFee(m, true);
+    $("hourRows").innerHTML =
+      feeRow("ceil(minutes / 60.0)", hCorrect, hCorrect) +
+      feeRow("floor, then max(1, h)", hCorrect, hBug, "a part hour after the first is free");
+    var dCorrect = dailyFee(m, "ceil"), dToDays = dailyFee(m, "toDays"), dInt = dailyFee(m, "intDiv");
+    $("dayRows").innerHTML =
+      feeRow("ceil((double) m / 1440)", dCorrect, dCorrect) +
+      feeRow("toDays(), then max(1, d)", dCorrect, dToDays, "47 hours charged as one day") +
+      feeRow("ceil(m / 1440) — long division", dCorrect, dInt, "truncates before ceil runs");
+    $("benchCode").innerHTML =
+      "<span class='r'>long days = Duration.between(in, out).toDays();   // truncates</span>\n" +
+      "<span class='r'>days = Math.max(1, days);                        // patches only &lt; 24h</span>\n\n" +
+      "<span class='r'>Math.ceil(minutesParked / MINUTES_PER_DAY)       // long division first</span>\n\n" +
+      "<span class='g'>Math.max(1, (long) Math.ceil((double) minutesParked / MINUTES_PER_DAY))</span>";
+  }
+
+  /* ---------- race ---------- */
+  var STOPS = [[4, "enter park"], [28, "find spot"], [54, "occupy"], [80, "ticket"]];
+  function buildTracks() {
+    ["trackA", "trackB"].forEach(function (id) {
+      var t = $(id);
+      Array.prototype.forEach.call(t.querySelectorAll(".mark"), function (m) { m.remove(); });
+      STOPS.forEach(function (s) {
+        var m = document.createElement("div");
+        m.className = "mark";
+        m.style.left = s[0] + "%";
+        m.innerHTML = "<b>" + s[1] + "</b>";
+        t.appendChild(m);
+      });
+    });
+  }
+  function raceReset() {
+    ["runA", "runB"].forEach(function (id, i) {
+      var r = $(id);
+      r.style.left = "0%"; r.className = "runner"; r.textContent = i === 0 ? "A" : "B";
+    });
+    var v = $("raceVerdict");
+    v.className = "verdict";
+    v.textContent = "One free spot left: P1-S1. Press play.";
+    $("raceCode").innerHTML = raceMode === "old"
+      ? "<span class='r'>Optional&lt;ParkingSpot&gt; free = lot.findFreeSpot(type);</span>\n<span class='r'>free.get().occupy();   // a gap lives between these two lines</span>"
+      : "<span class='g'>lot.claimFreeSpot(type);   // search and claim, one call</span>\n<span class='g'>// inside: if (canFit &amp;&amp; spot.tryOccupy()) return spot;</span>";
+  }
+  function racePlay() {
+    raceReset();
+    var a = $("runA"), b = $("runB"), v = $("raceVerdict");
+    var t = function (ms) { return reduced() ? Math.min(ms / 8, 80) : ms; };
+    if (raceMode === "old") {
+      setTimeout(function () { a.style.left = "28%"; a.textContent = "A sees P1-S1"; }, t(100));
+      setTimeout(function () { b.style.left = "28%"; b.textContent = "B sees P1-S1"; }, t(500));
+      setTimeout(function () { v.textContent = "Both gates found the same free bay. Neither has occupied it yet."; }, t(1400));
+      setTimeout(function () { a.style.left = "54%"; a.textContent = "A occupies"; }, t(1600));
+      setTimeout(function () { b.style.left = "54%"; b.textContent = "B occupies"; b.className = "runner bad"; }, t(2000));
+      setTimeout(function () {
+        a.style.left = "80%"; a.textContent = "ticket A";
+        b.style.left = "80%"; b.textContent = "ticket B";
+      }, t(2900));
+      setTimeout(function () {
+        v.className = "verdict bad";
+        v.textContent = "Two tickets printed for bay P1-S1. occupy() was a read-check-write on a plain boolean, so both read false and both wrote true. No exception anywhere.";
+      }, t(3800));
+    } else {
+      setTimeout(function () { a.style.left = "54%"; a.textContent = "A: CAS wins"; a.className = "runner ok"; }, t(150));
+      setTimeout(function () { b.style.left = "54%"; b.textContent = "B: CAS loses"; }, t(700));
+      setTimeout(function () { a.style.left = "80%"; a.textContent = "ticket A"; }, t(1500));
+      setTimeout(function () { b.style.left = "28%"; b.textContent = "B tries the next bay"; }, t(1900));
+      setTimeout(function () {
+        v.className = "verdict good";
+        v.textContent = "One ticket. B lost the compare-and-set, got false back, and moved on to the next candidate — losing a race is a return value, not an exception.";
+      }, t(2900));
+    }
+  }
+
+  /* ---------- boot ---------- */
+  var rail = document.querySelector(".rail");
+  STEPS.forEach(function (s) {
+    var b = document.createElement("button");
+    b.className = "sbtn";
+    b.dataset.s = s.id;
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", "false");
+    b.innerHTML = '<span class="sid">STEP ' + s.id + '</span><span class="sname">' + s.name + "</span>";
+    b.onclick = function () { pickStep(s); };
+    rail.appendChild(b);
+  });
+
+  $("bPark").onclick = park;
+  $("bUnpark").onclick = unpark;
+  $("bReset").onclick = function () { pickStep(step); logEl.innerHTML = ""; log("k", "lot cleared"); };
+  $("benchRange").oninput = renderBench;
+  $("racePlay").onclick = racePlay;
+  $("raceReset").onclick = raceReset;
+  $("raceOld").onclick = function () {
+    raceMode = "old";
+    $("raceOld").setAttribute("aria-pressed", "true");
+    $("raceNew").setAttribute("aria-pressed", "false");
+    raceReset();
+  };
+  $("raceNew").onclick = function () {
+    raceMode = "new";
+    $("raceNew").setAttribute("aria-pressed", "true");
+    $("raceOld").setAttribute("aria-pressed", "false");
+    raceReset();
+  };
+
+  renderBench();
+  buildTracks();
+  raceReset();
+  pickStep(STEPS[0]);
+  logEl.innerHTML = "";
+  log("k", "step 1: every bay is identical. Try parking a truck.");
+})();
+</script>
