@@ -3,7 +3,7 @@ package com.vendingmachine.states;
 import com.vendingmachine.Inventory;
 import com.vendingmachine.Slot;
 
-/** Nothing selected, no money held. Carries no payload, so one instance suffices. */
+/** Nothing selected, no money held. Carries no payload, so instances are interchangeable. */
 public final class IdleState implements State {
 
     @Override

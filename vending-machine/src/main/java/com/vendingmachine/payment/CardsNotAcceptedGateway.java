@@ -1,9 +1,8 @@
 package com.vendingmachine.payment;
 
 /**
- * Null object for a machine with no card reader. Declining is the honest
- * answer: "no card reader" is a known outcome, not a system failure, so it
- * travels as a result like every other decline.
+ * Null object for a machine with no card reader. "No card reader" is a known
+ * answer, not a failure, so it travels as a decline like any other.
  */
 public final class CardsNotAcceptedGateway implements PaymentGateway {
 

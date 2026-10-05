@@ -1,9 +1,8 @@
 package com.vendingmachine.payment;
 
 /**
- * Cash already inside the machine: authorization is a local comparison that
- * cannot fail outwardly. This is the degenerate case that lets both tenders
- * share one authorization pipeline.
+ * Cash already inside the machine. Treating its local comparison as an
+ * authorization is what lets both tenders share one pipeline.
  */
 public final class CashPayment implements PaymentMethod {
 

@@ -10,8 +10,8 @@ import com.vendingmachine.payment.PaymentResult;
 import java.time.Instant;
 
 /**
- * A slot is selected and some cash may be held. Immutable: every change is a
- * new instance, so a fresh transaction cannot inherit the previous one's money.
+ * A slot is selected and some cash may be held. Immutable, so a new transaction
+ * cannot inherit the last one's money - there is nothing to reset.
  */
 public final class ItemSelectedState implements State {
 
@@ -36,16 +36,12 @@ public final class ItemSelectedState implements State {
         return Transition.to(new ItemSelectedState(slot, amountInserted + amount));
     }
 
-    /** Pure: nothing irreversible happens when a card payment is claimed. */
     @Override
     public Transition<Void> beginCardPayment(Card card, Instant startedAt, String attemptId) {
         return Transition.to(new PaymentPendingState(slot, amountInserted, card, startedAt, attemptId));
     }
 
-    /**
-     * Cash goes through the same authorization pipeline as a card, and its
-     * authorization is local, so there is nothing to wait for and no claim to hold.
-     */
+    /** Cash uses the same pipeline as a card; only this authorization is local. */
     @Override
     public PaymentResult authorizeCash() {
         return new CashPayment(amountInserted).authorize(slot.getItem().getPrice());
@@ -55,15 +51,12 @@ public final class ItemSelectedState implements State {
     public State nextStateFor(PaymentResult result) {
         return switch (result) {
             case PaymentResult.Approved approved -> new IdleState();
-            /* the money stays in the machine: the customer can top up and try again */
+            // stay put: the money is still in the machine, so the customer can top up
             case PaymentResult.Declined declined -> this;
         };
     }
 
-    /**
-     * Phase 3b. Reached only by the thread that won the commit, which is why the
-     * quantity needs no lock and no atomic of its own.
-     */
+    /** Reached only by the commit winner, which is why quantity needs no lock. */
     @Override
     public DispenseResult releaseItem(PaymentResult.Approved approved) {
         Item item = slot.getItem();

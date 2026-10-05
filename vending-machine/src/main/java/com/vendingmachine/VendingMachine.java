@@ -16,24 +16,17 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Owns the inventory, the card gateway, the clock and the current state, and
- * delegates every operation to that state. It holds no transaction data of its
- * own - the selected slot and the money inserted live inside the state.
+ * Entry point: holds the current state and delegates every operation to it. No
+ * transaction data lives here - the selected slot and the money inserted are
+ * inside the state.
  *
- * <p>Since V4 the state is an {@link AtomicReference}, which closes two holes a
- * plain field left open: the lost update when two threads both read the same
- * state and both assign, and the visibility hole where one thread never sees
- * the other's write at all.
- *
- * <p>Operations whose computation is <strong>pure</strong> use a retry loop:
- * losing the race costs nothing, so recomputing is free. Operations that charge
- * a card or release an item never retry - a retried charge is a second charge.
- * Those run in three phases: claim by compare-and-set, act, then commit by
- * compare-and-set.
+ * <p>The reference is atomic because two threads must not both read one state
+ * and both overwrite it. Pure operations retry on a lost race; a purchase that
+ * charges a card never does, because a retried charge is a second charge.
  */
 public class VendingMachine {
 
-    /** How long a card charge may be in flight before a later request may take over. */
+    /** After this, a later request may take over a claim that is still in flight. */
     static final Duration PAYMENT_TIMEOUT = Duration.ofSeconds(30);
 
     private final Inventory inventory;
@@ -50,14 +43,14 @@ public class VendingMachine {
         this(inventory, paymentGateway, Clock.systemUTC());
     }
 
-    /** Time is a dependency, so the expiry test advances a clock instead of sleeping. */
+    /** Time is injected so the expiry test can move it instead of sleeping. */
     public VendingMachine(Inventory inventory, PaymentGateway paymentGateway, Clock clock) {
         this.inventory = inventory;
         this.paymentGateway = paymentGateway;
         this.clock = clock;
     }
 
-    /** Legal in every state and identical in all of them, so it never goes through State. */
+    /** Identical in every state, so it never goes through State. */
     public List<ItemView> showItems() {
         List<ItemView> rows = new ArrayList<>();
         for (Slot slot : inventory.allSlots()) {
@@ -66,10 +59,7 @@ public class VendingMachine {
         return List.copyOf(rows);
     }
 
-    /**
-     * Pure, so losing the race costs nothing and recomputing is free: read the
-     * state, ask it for the next one, and publish only if nobody moved it first.
-     */
+    /** Pure, so a lost race costs nothing: recompute against the new state and retry. */
     public void selectItem(String code) {
         expireStaleClaim();
         while (true) {
@@ -103,34 +93,27 @@ public class VendingMachine {
         }
     }
 
-    /**
-     * Cash. Authorization is local, so there is no claim to hold and no window
-     * to be refused in - but the stock still moves only after the commit is won.
-     */
+    /** Cash authorizes locally, but the stock still moves only after the commit is won. */
     public DispenseResult dispense() {
         expireStaleClaim();
         while (true) {
             State current = state.get();
-            PaymentResult result = current.authorizeCash();          // pure
+            PaymentResult result = current.authorizeCash();
             if (result instanceof PaymentResult.Declined declined) {
-                /* "you have not paid enough yet" is a precondition, not an outcome */
+                // not having paid enough is a precondition, not an outcome
                 throw new IllegalStateException(declined.reason());
             }
             if (state.compareAndSet(current, current.nextStateFor(result))) {
                 return current.releaseItem((PaymentResult.Approved) result);
             }
-            /* someone else moved the machine on; recompute against the new state */
         }
     }
 
-    /**
-     * Card. Three phases, and the middle one - the network call - is made while
-     * holding no lock, so one hung gateway cannot freeze the whole machine.
-     */
+    /** Three phases. The network call in the middle holds no lock, so a hung gateway freezes nothing. */
     public PurchaseResult swipeCard(Card card) {
         expireStaleClaim();
 
-        // phase 1: claim. Pure, so losing it costs nothing and undoes nothing.
+        // 1 - claim: pure, so losing it leaves nothing to undo
         State current = state.get();
         Transition<Void> claim = current.beginCardPayment(card, clock.instant(), UUID.randomUUID().toString());
         State pending = claim.next();
@@ -138,12 +121,11 @@ public class VendingMachine {
             return new PurchaseResult.Busy("Another purchase is in progress. Try again in a moment.");
         }
 
-        // phase 2: the charge. Holding nothing. A PaymentGatewayException propagates
-        // and deliberately leaves the claim in place, so nobody else can buy an item
-        // we may already have been paid for.
+        // 2 - charge: a gateway failure propagates and keeps the claim, so nobody
+        //     else can buy an item we may already have been paid for
         PaymentResult charged = pending.authorizeCard(paymentGateway);
 
-        // phase 3: commit, then act
+        // 3 - commit, then release
         if (!state.compareAndSet(pending, pending.nextStateFor(charged))) {
             return orphaned(charged);
         }
@@ -156,26 +138,16 @@ public class VendingMachine {
         };
     }
 
-    /**
-     * Lazy expiry: the next request notices a stale claim and takes it over. A
-     * background sweeper would also work, and would be worth adding so that
-     * monitoring can see a machine stuck here - but it is not needed for
-     * correctness, because nobody is inconvenienced by a machine nobody is using.
-     */
+    /** Lazy expiry: the next request takes over a claim that went stale. */
     private void expireStaleClaim() {
         State current = state.get();
         if (current.isExpired(clock.instant(), PAYMENT_TIMEOUT)) {
-
             state.compareAndSet(current, new IdleState());
         }
     }
 
-    /**
-     * The charge completed but the claim had already been expired and taken over,
-     * so this thread has money that moved and no right to release an item.
-     */
+    /** The charge landed after the claim was taken over: money moved, no item to give. */
     private PurchaseResult orphaned(PaymentResult charged) {
-
         if (charged instanceof PaymentResult.Approved approved) {
             return new PurchaseResult.Busy(
                     "Payment " + approved.reference() + " completed too late and will be refunded.");

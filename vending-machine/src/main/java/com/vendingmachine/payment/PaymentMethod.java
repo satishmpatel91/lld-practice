@@ -1,9 +1,6 @@
 package com.vendingmachine.payment;
 
-/**
- * How a purchase is paid for. Cash is the degenerate case: its authorization is
- * instantaneous, so nothing downstream ever asks which tender it received.
- */
+/** How a purchase is paid for. Nothing downstream of authorize asks which tender it was. */
 public interface PaymentMethod {
 
     PaymentResult authorize(int amount);

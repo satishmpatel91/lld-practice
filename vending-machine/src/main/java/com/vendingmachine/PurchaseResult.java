@@ -1,8 +1,8 @@
 package com.vendingmachine;
 
 /**
- * What a card purchase attempt produced. Sealed, so adding a case makes every
- * switch over it fail to compile until that case is handled.
+ * What a card attempt produced. Sealed, so adding a case makes every switch over
+ * it fail to compile until that case is handled.
  */
 public sealed interface PurchaseResult
         permits PurchaseResult.Dispensed, PurchaseResult.Declined, PurchaseResult.Busy {

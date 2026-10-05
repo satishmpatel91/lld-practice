@@ -1,9 +1,8 @@
 package com.vendingmachine.payment;
 
 /**
- * Card payment for one attempt. The idempotency key belongs to the attempt, so
- * it is held here rather than passed to authorize - which keeps PaymentMethod's
- * signature the same for cash.
+ * One card attempt. The idempotency key belongs to the attempt, so it is held
+ * here rather than passed in - which leaves PaymentMethod unchanged for cash.
  */
 public final class CardPayment implements PaymentMethod {
 
@@ -24,7 +23,7 @@ public final class CardPayment implements PaymentMethod {
         }
         PaymentResult result = gateway.charge(card, amount, idempotencyKey);
         return switch (result) {
-            // a card is charged the exact price, so change is structurally impossible
+            // a card is charged the exact price, so change is impossible by construction
             case PaymentResult.Approved approved -> new PaymentResult.Approved(0, approved.reference());
             case PaymentResult.Declined declined -> declined;
         };
