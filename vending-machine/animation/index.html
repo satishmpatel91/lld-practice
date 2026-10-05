@@ -441,6 +441,10 @@ footer code { font-family: var(--font-mono); font-size: 12px; color: var(--ink);
       <button class="chip" data-gw="DECLINE">declines</button>
       <button class="chip" data-gw="FAIL">times out</button>
     </div>
+    <div class="gw" id="claimRow" hidden>
+      <span>stale claim:</span>
+      <button class="chip" id="bExpire">+31s, let the next request take over</button>
+    </div>
   </div>
 
   <div style="display:grid; gap:18px; min-width:0;">
@@ -938,7 +942,8 @@ classDiagram
     stEl.textContent = S.state;
     creditEl.textContent = S.credit;
     if (cur.payload && S.slot) {
-      payloadEl.textContent = "ItemSelectedState(" + S.slot + ", " + S.credit + ")";
+      var holder = S.state === "PAYMENT_PENDING" ? "PaymentPendingState" : "ItemSelectedState";
+      payloadEl.textContent = holder + "(" + S.slot + ", " + S.credit + ")";
     } else if (S.slot) {
       payloadEl.textContent = "selectedSlot = " + S.slot;
     } else {
