@@ -17,8 +17,15 @@ Also published as a private Artifact:
 
 A garage seen from above — levels, bays with their size and distance from the
 entrance, and entry/exit barriers that lift as vehicles pass. Pick a vehicle,
-park it, advance the clock, take it out. Then change step and try the same
+park it, advance the clock, drive it out. Then change step and try the same
 thing again.
+
+**Several vehicles can be in the lot at once.** Each one gets its own ticket in
+the controls panel, carrying its own entry time, so one lot clock serves them
+all and each receipt prices only that vehicle's stay — the same shape as
+`TicketRepository` holding many tickets. **Fill the lot** parks vehicles until
+`claimFreeSpot` refuses, which is how a full lot reports itself: an empty
+`Optional`, not an exception.
 
 | Try this | What it demonstrates |
 |---|---|

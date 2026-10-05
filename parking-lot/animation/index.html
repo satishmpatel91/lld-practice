@@ -188,6 +188,25 @@ header { display: grid; gap: 12px; margin-bottom: 22px; }
 .slip .amt { font-family: var(--sign); font-size: 25px; letter-spacing: .01em; color: var(--ink); }
 .slip .dash { border-top: 1px dashed var(--line); margin: 4px 0; }
 
+.tix { display: grid; gap: 5px; max-height: 188px; overflow-y: auto; }
+.tix .empty { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+.tix .tix-row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 7px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 5px; padding: 5px 7px; font-family: var(--mono); font-size: 10.5px;
+}
+.tix .tix-row.in { animation: slipin .4s cubic-bezier(.2, 1.2, .4, 1); }
+.tix .tix-row .ic { font-size: 14px; line-height: 1; }
+.tix .tix-row .meta { color: var(--ink-dim); line-height: 1.45; min-width: 0; }
+.tix .tix-row .meta b { color: var(--ink); font-weight: 500; }
+.tix .tix-row button {
+  cursor: pointer; font: 600 10px var(--sign); letter-spacing: .08em; text-transform: uppercase;
+  background: transparent; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 4px; padding: 3px 7px;
+}
+.tix .tix-row button:hover { border-color: var(--accent); color: var(--accent); }
+.tix .tix-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .clock { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
 .clock b { font-family: var(--sign); font-size: 20px; color: var(--ink); letter-spacing: .02em; }
 
@@ -254,8 +273,8 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
   <div class="hrule" aria-hidden="true"></div>
   <p class="lede">
     A garage built by adding <strong>one requirement at a time</strong>, and introducing an
-    abstraction only when that requirement forces it. Park a vehicle, advance the clock, take it
-    out — then change step and watch what the design can suddenly do.
+    abstraction only when that requirement forces it. Park several vehicles, advance the clock,
+    drive them out one by one — then change step and watch what the design can suddenly do.
   </p>
 </header>
 
@@ -323,9 +342,14 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
         </div>
 
         <div class="act">
-          <button class="btn wide" id="bPark">Park</button>
-          <button class="btn ghost" id="bUnpark">Exit</button>
+          <button class="btn wide" id="bPark">Park a vehicle</button>
+          <button class="btn ghost" id="bFill">Fill the lot</button>
           <button class="btn ghost" id="bReset">Reset</button>
+        </div>
+
+        <div class="grp">
+          <span class="lab">Parked now <span id="ticketCount" class="pill good">0</span></span>
+          <div id="tickets" class="tix"></div>
         </div>
 
         <div id="slipHost" style="display:grid; gap:8px;"></div>
@@ -579,8 +603,8 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
   };
 
   var step = STEPS[0];
-  var veh = "MEDIUM", gate = "G1", plan = "HOURLY", strat = "FIRST", minutes = 0;
-  var spots = [], parked = null, raceMode = "old";
+  var veh = "MEDIUM", gate = "G1", plan = "HOURLY", strat = "FIRST", now = 0;
+  var spots = [], tickets = [], seq = 0, raceMode = "old";
 
   var $ = function (id) { return document.getElementById(id); };
   var logEl = $("log");
@@ -673,11 +697,11 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
       var b = document.createElement("button");
       b.className = "opt";
       b.textContent = pair[0];
-      b.onclick = function () { minutes += pair[1]; renderClock(); };
+      b.onclick = function () { now += pair[1]; renderClock(); renderTickets(); };
       co.appendChild(b);
     });
     renderClock();
-    $("bUnpark").disabled = !parked;
+    renderTickets();
   }
 
   function opts(host, list, current, onPick) {
@@ -697,7 +721,36 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
     if (m < 1440) { return Math.floor(m / 60) + "h " + String(m % 60).padStart(2, "0") + "m"; }
     return Math.floor(m / 1440) + "d " + Math.floor((m % 1440) / 60) + "h";
   }
-  function renderClock() { $("clockOut").textContent = fmt(minutes); }
+  function renderClock() {
+    $("clockOut").textContent = fmt(now);
+    var lab = document.querySelector("#grpClock .lab");
+    if (lab) { lab.textContent = "Lot clock"; }
+  }
+
+  /* every ticket carries its own entry time, so one clock serves them all */
+  function renderTickets() {
+    var host = $("tickets");
+    $("ticketCount").textContent = String(tickets.length);
+    if (!tickets.length) {
+      host.innerHTML = '<span class="empty">no vehicles in the lot</span>';
+      return;
+    }
+    host.innerHTML = "";
+    tickets.forEach(function (t) {
+      var row = document.createElement("div");
+      row.className = "tix-row";
+      var stay = now - t.entryAt;
+      row.innerHTML = '<span class="ic">' + SIZES[t.veh].icon + "</span>" +
+        '<span class="meta"><b>' + t.spot + "</b> \u00b7 " + t.reg +
+        (step.pricing ? "<br>" + t.plan.toLowerCase() + " \u00b7 in at " + fmt(t.entryAt) + " \u00b7 " + fmt(stay) + " so far" : "") +
+        "</span>";
+      var b = document.createElement("button");
+      b.textContent = "Exit";
+      b.onclick = function () { unpark(t.id); };
+      row.appendChild(b);
+      host.appendChild(row);
+    });
+  }
 
   function updateGates() {
     $("gateIn").classList.toggle("live", !step.gates || gate === "G1");
@@ -759,10 +812,6 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
       log("k", "a miswired gate is a programming mistake, so it throws rather than returning empty");
       return;
     }
-    if (parked) {
-      log("wn", "this demo tracks one vehicle at a time — take it out first");
-      return;
-    }
     var list = candidates();
     if (!list.length) {
       log("no", "claimFreeSpot(" + veh + ") → Optional.empty() — no bay fits, the driver is turned away");
@@ -787,62 +836,67 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
     setTimeout(function () {
       chosen.occupied = true;
       chosen.by = veh;
-      parked = { spot: chosen.no, plan: plan, gate: step.gates ? gate : "G1", veh: veh };
-      minutes = 0;
+      seq += 1;
+      var ticket = {
+        id: "T" + seq,
+        reg: "KA01-" + (1000 + Math.floor(Math.random() * 8999)),
+        spot: chosen.no, plan: plan, gate: step.gates ? gate : "G1",
+        veh: veh, entryAt: now
+      };
+      tickets.push(ticket);
       boom("in");
       driveTo("bay-" + chosen.no, SIZES[veh].icon, function () {
         renderFloors(); renderControls();
-        printTicket();
       });
-      if (reduced()) { renderFloors(); renderControls(); printTicket(); }
+      if (reduced()) { renderFloors(); renderControls(); }
       log("ok", (step.strategy ? "claimFrom(candidates)" : "claimFreeSpot(" + veh + ")") + " → " + chosen.no +
         (step.sizes ? " (" + chosen.type.toLowerCase() + ")" : "") + (step.strategy ? ", " + chosen.dist + "m from the gate" : ""));
       if (step.cas) { log("k", "tryOccupy() won the compare-and-set — the search and the claim were one call"); }
     }, step.strategy && !reduced() ? 650 : 0);
   }
 
-  function printTicket() {
-    var host = $("slipHost");
-    var p = parked;
-    host.innerHTML =
-      '<div class="slip in"><span class="t">Parking ticket</span>' +
-      "<span>spot <b>" + p.spot + "</b></span>" +
-      (step.gates ? "<span>gate <b>" + p.gate + "</b></span>" : "") +
-      "<span>vehicle <b>" + SIZES[p.veh].label.toLowerCase() + " KA-01-" + (1000 + Math.floor(Math.random() * 8999)) + "</b></span>" +
-      (step.pricing ? "<span>plan <b>" + p.plan.toLowerCase() + "</b></span>" : "") +
-      "<span>entry <b>00:00</b></span></div>";
-  }
-
-  function unpark() {
-    if (!parked) { return; }
-    if (step.gates && gate !== "G2") {
-      log("no", "requireGateType(" + gate + ", EXIT) → IllegalArgumentException: " + gate + " is an ENTRY gate");
+  function unpark(ticketId) {
+    var idx = -1;
+    tickets.forEach(function (t, i) { if (t.id === ticketId) { idx = i; } });
+    if (idx < 0) {
+      log("no", "findById(" + ticketId + ") -> Optional.empty() - no such ticket");
       return;
     }
-    var p = parked, s = spots.filter(function (x) { return x.no === p.spot; })[0];
-    s.occupied = false; s.by = null;
-    parked = null;
+    var t = tickets[idx];
+    if (step.gates && gate !== "G2") {
+      log("no", "requireGateType(" + gate + ", EXIT) -> IllegalArgumentException: " + gate + " is an ENTRY gate");
+      log("k", "switch the gate control to G2 to drive out");
+      return;
+    }
+    var spot = spots.filter(function (x) { return x.no === t.spot; })[0];
+    spot.occupied = false;
+    spot.by = null;
+    tickets.splice(idx, 1);
     boom("out");
+
     var host = $("slipHost");
     if (step.pricing) {
-      var fee = p.plan === "HOURLY" ? hourlyFee(minutes, false) : dailyFee(minutes, "ceil");
-      var units = p.plan === "HOURLY" ? Math.max(1, Math.ceil(minutes / 60)) : Math.max(1, Math.ceil(minutes / 1440));
+      var stay = Math.max(0, now - t.entryAt);
+      var hourly = t.plan === "HOURLY";
+      var fee = hourly ? hourlyFee(stay, false) : dailyFee(stay, "ceil");
+      var units = Math.max(1, Math.ceil(stay / (hourly ? 60 : 1440)));
       host.innerHTML =
         '<div class="slip in"><span class="t">Receipt</span>' +
-        "<span>spot <b>" + p.spot + "</b></span>" +
-        "<span>parked <b>" + fmt(minutes) + "</b></span>" +
-        "<span>" + (p.plan === "HOURLY" ? "hours" : "days") + " charged <b>" + units + "</b></span>" +
+        "<span>spot <b>" + t.spot + "</b></span>" +
+        "<span>vehicle <b>" + t.reg + "</b></span>" +
+        "<span>parked <b>" + fmt(stay) + "</b></span>" +
+        "<span>" + (hourly ? "hours" : "days") + " charged <b>" + units + "</b></span>" +
         '<div class="dash"></div><span class="amt">' + fee + "</span></div>";
-      log("ok", "unpark() → " + fmt(minutes) + " → " + units + " " + (p.plan === "HOURLY" ? "hour" : "day") +
-        (units === 1 ? "" : "s") + " × " + (p.plan === "HOURLY" ? HOURLY : DAILY) + " = " + fee);
-      log("k", "part periods round up, and the minimum charge is one " + (p.plan === "HOURLY" ? "hour" : "day"));
+      log("ok", "unpark(" + t.id + ") -> " + fmt(stay) + " -> " + units + " " + (hourly ? "hour" : "day") +
+        (units === 1 ? "" : "s") + " x " + (hourly ? HOURLY : DAILY) + " = " + fee);
+      log("k", "the plan was fixed at entry, so the driver cannot be re-priced on the way out");
     } else {
       host.innerHTML = "";
-      log("ok", "unpark() → " + p.spot + " released. No pricing until step 5.");
+      log("ok", "unpark(" + t.id + ") -> " + t.spot + " released. No pricing until step 5.");
     }
-    if (step.cas) { log("k", "free() CASes true→false, so nobody can release a bay they do not hold"); }
-    minutes = 0;
-    renderFloors(); renderControls();
+    if (step.cas) { log("k", "free() CASes true->false, so nobody can release a bay they do not hold"); }
+    renderFloors();
+    renderControls();
   }
 
   /* ---------- step switching ---------- */
@@ -866,7 +920,7 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
       b.setAttribute("aria-selected", String(b.dataset.s === s.id));
     });
     if (!s.gates) { gate = "G1"; }
-    parked = null; minutes = 0;
+    tickets = []; now = 0; seq = 0;
     $("slipHost").innerHTML = "";
     buildSpots(); renderFloors(); renderControls(); updateGates();
     log("k", "—— step " + s.id + ": " + s.name.toLowerCase() + " ——");
@@ -970,7 +1024,37 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
   });
 
   $("bPark").onclick = park;
-  $("bUnpark").onclick = unpark;
+  $("bFill").onclick = function () {
+    /* park until the lot refuses, which is how a full lot reports itself */
+    var guard = 0;
+    var types = step.sizes ? ["SMALL", "MEDIUM", "LARGE"] : ["MEDIUM"];
+    var keepVeh = veh;
+    while (guard < 24) {
+      guard += 1;
+      var placed = false;
+      for (var i = 0; i < types.length; i++) {
+        veh = types[i];
+        if (candidates().length) {
+          var c = candidates()[0];
+          c.occupied = true;
+          c.by = veh;
+          seq += 1;
+          tickets.push({
+            id: "T" + seq, reg: "KA01-" + (1000 + Math.floor(Math.random() * 8999)),
+            spot: c.no, plan: plan, gate: "G1", veh: veh, entryAt: now
+          });
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) { break; }
+    }
+    veh = keepVeh;
+    renderFloors();
+    renderControls();
+    log("ok", "parked until the lot refused: " + tickets.length + " vehicles in, every remaining bay is the wrong size or taken");
+    log("k", "claimFreeSpot(...) -> Optional.empty() for the next driver");
+  };
   $("bReset").onclick = function () { pickStep(step); logEl.innerHTML = ""; log("k", "lot cleared"); };
   $("benchRange").oninput = renderBench;
   $("racePlay").onclick = racePlay;
@@ -993,6 +1077,6 @@ footer code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
   raceReset();
   pickStep(STEPS[0]);
   logEl.innerHTML = "";
-  log("k", "step 1: every bay is identical. Try parking a truck.");
+  log("k", "step 1: every bay is identical. Park a few vehicles, then try a truck.");
 })();
 </script>
