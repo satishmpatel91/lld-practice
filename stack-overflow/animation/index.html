@@ -1,0 +1,1158 @@
+<title>Stack Overflow, Six Requirements</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: thread beside its controls, then three benches, then the class diagram */
+:root {
+  --bg: #f1f1f4;
+  --surface: #fcfcfd;
+  --surface-2: #e6e6ec;
+  --ink: #16161b;
+  --ink-dim: #5b5b67;
+  --line: #d2d2da;
+  --accent: #434bb0;          /* reputation and emphasis */
+  --up: #1c7149;
+  --down: #a4322f;
+  --warn: #8a5a00;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 10px 26px rgba(0, 0, 0, .07);
+  --display: "Newsreader", Georgia, serif;
+  --body: "Public Sans", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141418;
+    --surface: #1c1c22;
+    --surface-2: #24242c;
+    --ink: #ebebf1;
+    --ink-dim: #9696a3;
+    --line: #31313c;
+    --accent: #949aef;
+    --up: #4cc78a;
+    --down: #ef7b78;
+    --warn: #e0a84e;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 12px 30px rgba(0, 0, 0, .4);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141418;
+  --surface: #1c1c22;
+  --surface-2: #24242c;
+  --ink: #ebebf1;
+  --ink-dim: #9696a3;
+  --line: #31313c;
+  --accent: #949aef;
+  --up: #4cc78a;
+  --down: #ef7b78;
+  --warn: #e0a84e;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 12px 30px rgba(0, 0, 0, .4);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--body); font-size: 15px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1160px; margin: 0 auto; padding-inline: 18px; padding-block: 26px 56px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(32px, 5.4vw, 52px); line-height: 1.02; letter-spacing: -.015em; }
+h2 { font-size: clamp(22px, 3vw, 31px); letter-spacing: -.01em; }
+h3 { font-family: var(--body); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+p { margin: 0; }
+code, .mono { font-family: var(--mono); }
+.eyebrow { font-family: var(--mono); font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-dim); }
+.lede { color: var(--ink-dim); max-width: 66ch; font-size: 16px; }
+.lede strong { color: var(--ink); font-weight: 600; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+header { display: grid; gap: 12px; margin-bottom: 24px; }
+.hrule { height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--accent) 0 34%, var(--up) 34% 58%, var(--down) 58% 72%, var(--line) 72% 100%); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); min-width: 0; }
+.card > .hd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+.card > .bd { padding: 14px; }
+
+.block { margin-top: 44px; display: grid; gap: 14px; }
+.block > .intro { display: grid; gap: 7px; }
+
+/* ---------- the stage ---------- */
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 320px); gap: 18px; align-items: start; }
+@media (max-width: 920px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+
+.board { display: grid; gap: 12px; min-width: 0; }
+.post {
+  display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 12px;
+  background: var(--surface); border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: 10px; padding: 12px; box-shadow: var(--shadow);
+  cursor: pointer; transition: border-color .16s, box-shadow .16s;
+}
+.post:hover { border-color: var(--accent); }
+.post.sel { border-left-color: var(--accent); box-shadow: var(--shadow), inset 0 0 0 1px var(--accent); }
+.post.q { border-left-color: var(--accent); }
+.post.a { border-left-color: var(--up); margin-left: clamp(0px, 3vw, 28px); }
+.post.w { border-left-color: var(--warn); margin-left: clamp(0px, 3vw, 28px); }
+.post .kind { font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); }
+.post .ttl { font-family: var(--display); font-size: 19px; font-weight: 600; line-height: 1.25; }
+.post .txt { color: var(--ink-dim); font-size: 14px; }
+.post .by { font-size: 12.5px; color: var(--ink-dim); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.post .by b { color: var(--ink); font-weight: 600; }
+
+.votecol { display: grid; justify-items: center; align-content: start; gap: 2px; }
+.arrow {
+  width: 34px; height: 24px; display: grid; place-items: center; cursor: pointer;
+  background: none; border: 1px solid transparent; border-radius: 6px; padding: 0; color: var(--ink-dim);
+  transition: color .14s, background .14s, border-color .14s;
+}
+.arrow:hover { border-color: var(--line); background: var(--surface-2); }
+.arrow svg { width: 17px; height: 11px; display: block; }
+.arrow.on.u { color: var(--up); background: color-mix(in srgb, var(--up) 16%, transparent); border-color: color-mix(in srgb, var(--up) 40%, transparent); }
+.arrow.on.d { color: var(--down); background: color-mix(in srgb, var(--down) 16%, transparent); border-color: color-mix(in srgb, var(--down) 40%, transparent); }
+.arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.score { font-family: var(--mono); font-size: 16px; font-weight: 500; line-height: 1.1; }
+.score.pos { color: var(--up); }
+.score.neg { color: var(--down); }
+
+.tags { display: flex; gap: 5px; flex-wrap: wrap; }
+.tag {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 999px; padding: 2px 8px;
+}
+.cmts { display: grid; gap: 5px; border-top: 1px dashed var(--line); padding-top: 7px; margin-top: 3px; }
+.cmt { font-size: 12.5px; color: var(--ink-dim); }
+.cmt b { color: var(--ink); font-weight: 600; }
+
+.verdict {
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+  overflow-x: auto; min-width: 0;
+}
+.verdict .ok { color: var(--up); }
+.verdict .no { color: var(--down); }
+.verdict .dim { color: var(--ink-dim); }
+
+/* ---------- controls ---------- */
+.ctl { display: grid; gap: 13px; }
+.grp { display: grid; gap: 7px; }
+.lab { font-family: var(--mono); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-dim); }
+.who { display: grid; gap: 6px; }
+.wbtn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px;
+  font: inherit; color: var(--ink); text-align: left; transition: border-color .14s, background .14s;
+}
+.wbtn:hover { border-color: var(--accent); }
+.wbtn[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, var(--surface)); box-shadow: inset 0 0 0 1px var(--accent); }
+.wbtn .nm { font-weight: 600; }
+.rep { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.rep.neg { color: var(--down); }
+
+.btn {
+  cursor: pointer; font: inherit; font-weight: 600; font-size: 13.5px;
+  background: var(--accent); color: #fff; border: 1px solid transparent;
+  border-radius: 8px; padding: 8px 12px; transition: filter .14s, opacity .14s;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn.ghost { background: var(--surface); color: var(--ink); border-color: var(--line); }
+.btn.ghost:hover { border-color: var(--accent); filter: none; }
+.btn[disabled] { opacity: .42; cursor: not-allowed; filter: none; }
+.btn.wide { width: 100%; }
+.btns { display: grid; gap: 6px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+.ledger { display: grid; gap: 3px; max-height: 190px; overflow-y: auto; font-family: var(--mono); font-size: 11.5px; }
+.lrow { display: grid; grid-template-columns: 44px 38px minmax(0, 1fr); gap: 6px; align-items: baseline; }
+.lrow .d { text-align: right; }
+.lrow .d.p { color: var(--up); }
+.lrow .d.n { color: var(--down); }
+.lrow .d.z { color: var(--ink-dim); }
+.lrow .m { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty { color: var(--ink-dim); font-size: 12.5px; font-family: var(--body); }
+
+.code {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.62; white-space: pre;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px;
+  padding: 10px 12px; overflow-x: auto; min-width: 0; color: var(--ink);
+}
+.code .c { color: var(--ink-dim); }
+.code .g { color: var(--up); }
+.code .r { color: var(--down); }
+.code .k { color: var(--accent); }
+
+/* ---------- benches ---------- */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.opt {
+  cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
+  background: var(--surface); color: var(--ink-dim); border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 11px; transition: border-color .14s, color .14s, background .14s;
+}
+.opt:hover { border-color: var(--accent); }
+.opt[aria-pressed="true"] { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 11%, var(--surface)); }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 760px) { .two { grid-template-columns: minmax(0, 1fr); } .row2 { grid-template-columns: 1fr; } }
+
+.col { display: grid; gap: 8px; min-width: 0; }
+.coltitle { display: flex; align-items: baseline; gap: 8px; }
+.pill { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; border-radius: 999px; padding: 2px 8px; border: 1px solid var(--line); color: var(--ink-dim); }
+.pill.good { color: var(--up); border-color: color-mix(in srgb, var(--up) 42%, transparent); background: color-mix(in srgb, var(--up) 12%, transparent); }
+.pill.bad { color: var(--down); border-color: color-mix(in srgb, var(--down) 42%, transparent); background: color-mix(in srgb, var(--down) 12%, transparent); }
+
+table.t { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+table.t th, table.t td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+table.t th { font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-dim); font-weight: 500; }
+table.t td:first-child, table.t th:first-child { text-align: left; }
+table.t td.hit { color: var(--down); font-weight: 500; }
+table.t td.fine { color: var(--up); }
+.scroller { overflow-x: auto; min-width: 0; }
+
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="text"] {
+  width: 100%; font: inherit; font-family: var(--mono); font-size: 13px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px;
+}
+input[type="text"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+.gate { display: grid; gap: 7px; }
+.gaterow { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 9px; align-items: start; font-size: 13px; }
+.gaterow .mk { font-family: var(--mono); font-weight: 500; }
+.gaterow .mk.no { color: var(--down); }
+.gaterow .mk.ok { color: var(--up); }
+.cerr {
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+  background: color-mix(in srgb, var(--down) 9%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--down) 34%, transparent);
+  border-left: 3px solid var(--down); border-radius: 7px; padding: 9px 11px;
+  overflow-x: auto; min-width: 0; color: var(--ink);
+}
+.note { font-size: 13.5px; color: var(--ink-dim); }
+.note strong { color: var(--ink); font-weight: 600; }
+
+.hits { display: grid; gap: 7px; }
+.hit {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center;
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface);
+  font-size: 13.5px;
+}
+.hit.miss { opacity: .45; }
+.hit .sub { font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); }
+
+/* ---------- diagram ---------- */
+.dgm { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); height: clamp(320px, 62vh, 680px); touch-action: none; }
+.dgm-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; padding: 18px; cursor: grab; }
+.dgm-stage.drag { cursor: grabbing; }
+.dgm-stage svg { max-width: none !important; width: auto !important; height: auto !important; }
+.dgm-ctl { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 5px; }
+.dgm-ctl button {
+  cursor: pointer; font: inherit; font-family: var(--mono); font-size: 12px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 7px; min-width: 30px; height: 28px; padding: 0 7px;
+}
+.dgm-ctl button:hover { border-color: var(--accent); }
+.dgm-zoom { position: absolute; left: 10px; bottom: 10px; font-family: var(--mono); font-size: 11px; color: var(--ink-dim); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; }
+.dgm-hint { position: absolute; left: 10px; top: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+@media (max-width: 620px) { .dgm-hint { display: none; } }
+
+footer { margin-top: 48px; border-top: 1px solid var(--line); padding-top: 16px; color: var(--ink-dim); font-size: 13.5px; }
+footer code { font-size: 12.5px; color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0s !important; animation-duration: 0s !important; }
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">Low level design · interactive walkthrough</span>
+  <h1>Stack Overflow, Six Requirements</h1>
+  <div class="hrule"></div>
+  <p class="lede">
+    Six requirements, ten classes, and <strong>no design patterns</strong> — the exercise ended with
+    two plain-OOP changes and a written argument for rejecting Visitor, Strategy, Specification,
+    Repository and Observer. Work the thread below and the rules enforce themselves: one vote per
+    person per post, nobody votes on their own, and every reputation move comes from one table.
+    Underneath, the three bugs the tests caught.
+  </p>
+</header>
+
+<div class="stage">
+
+  <div class="board">
+    <div id="thread"></div>
+    <div class="verdict" id="verdict"><span class="dim">Click an arrow to vote. Click a post to select it, then answer or comment on it.</span></div>
+  </div>
+
+  <div class="card">
+    <div class="hd"><h3>Controls</h3><span class="eyebrow" id="selTag">question q1 selected</span></div>
+    <div class="bd ctl">
+
+      <div class="grp">
+        <span class="lab">Acting as</span>
+        <div class="who" id="who"></div>
+      </div>
+
+      <div class="grp">
+        <span class="lab">Write something</span>
+        <div class="btns">
+          <button class="btn wide" id="bAsk">Ask a question</button>
+          <div class="row2">
+            <button class="btn ghost" id="bAnswer">Answer</button>
+            <button class="btn ghost" id="bComment">Comment</button>
+          </div>
+          <div class="row2">
+            <button class="btn ghost" id="bFlow">Run the flow</button>
+            <button class="btn ghost" id="bReset">Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grp">
+        <span class="lab">Reputation ledger</span>
+        <div class="ledger" id="ledger"></div>
+      </div>
+
+      <div class="code" id="snippet"></div>
+
+    </div>
+  </div>
+</div>
+
+<section class="block">
+  <div class="intro">
+    <span class="eyebrow">Bench one</span>
+    <h2>Which post is this?</h2>
+    <p class="lede">
+      Reputation has to know whether it is scoring a question (+5) or an answer (+10), and all it
+      holds is a <code>Post</code>. V1 asked with <code>instanceof</code>. Add a third post type to
+      each version and watch what the compiler does — or doesn't do.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="hd">
+      <div class="tabs">
+        <button class="opt" id="dispV1" aria-pressed="true">V1 — instanceof chain</button>
+        <button class="opt" id="dispV2" aria-pressed="false">V2 — sealed + switch</button>
+      </div>
+      <button class="btn ghost" id="bWiki">Add a third post type</button>
+    </div>
+    <div class="bd two">
+      <div class="col">
+        <div class="code" id="dispCode"></div>
+        <p class="note" id="dispNote"></p>
+      </div>
+      <div class="col">
+        <h3>What happens when <code>WikiPost extends Post</code> arrives</h3>
+        <div class="gate" id="dispGates"></div>
+        <div id="dispErrHost"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="intro">
+    <span class="eyebrow">Bench two</span>
+    <h2>Two ways to add a number</h2>
+    <p class="lede">
+      Both reputation bugs in this exercise were arithmetic, both were found by the tests rather
+      than by reading, and both are one token wide.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="hd">
+      <div class="tabs">
+        <button class="opt" id="repDouble" aria-pressed="true">The delta that doubled</button>
+        <button class="opt" id="repReturn" aria-pressed="false">The return that was missing</button>
+      </div>
+    </div>
+
+    <div class="bd" id="paneDouble">
+      <div class="two">
+        <div class="col">
+          <div class="code"><span class="c">// addReputation takes a DELTA</span>
+<span class="k">void</span> addReputation(<span class="k">int</span> delta) {
+    reputation += delta;
+}
+
+<span class="g">author.addReputation(QUESTION_POSTED);</span>
+<span class="r">author.addReputation(author.getReputation()</span>
+<span class="r">                     + QUESTION_POSTED);</span></div>
+          <p class="note">
+            The second line passes the current total <em>plus</em> the increment into a method that
+            already does <code>+=</code>, so each post applies the recurrence
+            <strong>r → 2r + 1</strong>. After <span class="mono">n</span> questions the score is
+            <strong>2<sup>n</sup> − 1</strong> instead of <span class="mono">n</span>.
+          </p>
+          <div class="grp">
+            <span class="lab">Questions asked · <b class="mono tnum" id="dblLabel">4</b></span>
+            <input type="range" id="dblRange" min="1" max="10" value="4" step="1" aria-label="Questions asked">
+          </div>
+        </div>
+        <div class="col scroller">
+          <table class="t">
+            <thead><tr><th>After</th><th>Delta only</th><th>Total + delta</th><th>Too high by</th></tr></thead>
+            <tbody id="dblRows"></tbody>
+          </table>
+          <p class="note" id="dblNote"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="bd" id="paneReturn" hidden>
+      <div class="two">
+        <div class="col">
+          <div class="tabs">
+            <button class="opt" id="retWith" aria-pressed="true">with the early return</button>
+            <button class="opt" id="retWithout" aria-pressed="false">without it</button>
+          </div>
+          <div class="code" id="retCode"></div>
+          <p class="note" id="retNote"></p>
+        </div>
+        <div class="col">
+          <h3>A downvote, both ways</h3>
+          <div class="scroller">
+            <table class="t">
+              <thead><tr><th>Downvote on</th><th>Table says</th><th>Code gives</th></tr></thead>
+              <tbody id="retRows"></tbody>
+            </table>
+          </div>
+          <h3>What the suite printed</h3>
+          <div class="code" id="retFails"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="intro">
+    <span class="eyebrow">Bench three</span>
+    <h2>Three searches, one index</h2>
+    <p class="lede">
+      Search returns questions and never answers, because the search index holds questions only.
+      Tags normalise on the way in <em>and</em> on the way out, so the case you type never matters.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="hd">
+      <div class="tabs">
+        <button class="opt" id="sKeyword" aria-pressed="true">by keyword</button>
+        <button class="opt" id="sTag" aria-pressed="false">by tag</button>
+        <button class="opt" id="sAuthor" aria-pressed="false">by author</button>
+      </div>
+      <span class="eyebrow" id="sCall"></span>
+    </div>
+    <div class="bd two">
+      <div class="col">
+        <div class="grp">
+          <span class="lab" id="sLab">Keyword</span>
+          <input type="text" id="sInput" value="HashMap" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="code" id="sCode"></div>
+        <p class="note" id="sNote"></p>
+      </div>
+      <div class="col">
+        <h3>The corpus</h3>
+        <div class="hits" id="sHits"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="intro">
+    <span class="eyebrow">The whole design</span>
+    <h2>Ten classes, close up</h2>
+    <p class="lede">
+      The V2 diagram, same Mermaid source as <code>StackOverflow.md</code>. Ownership runs one way
+      only: a question holds its answers, a post holds its comments and votes, and nothing points
+      back up.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="bd">
+      <div class="dgm" id="dgmFrame">
+        <div class="dgm-stage" id="dgmStage">
+<pre class="mermaid">
+classDiagram
+    class User {
+        -String id
+        -String displayName
+        -int reputation
+    }
+
+    class Post {
+        &lt;&lt;sealed&gt;&gt;
+        -String id
+        -User author
+        -String body
+        -Instant createdAt
+        -Map~String, Vote~ votesByUserId
+        -List~Comment~ comments
+    }
+
+    class Question {
+        &lt;&lt;final&gt;&gt;
+        -String title
+        -Set~Tag~ tags
+        -List~Answer~ answers
+    }
+
+    class Answer {
+        &lt;&lt;final&gt;&gt;
+    }
+
+    class Comment {
+        -String id
+        -User author
+        -String text
+        -Instant createdAt
+    }
+
+    class Vote {
+        &lt;&lt;record&gt;&gt;
+        +User voter
+        +VoteType type
+    }
+
+    class Tag {
+        &lt;&lt;record&gt;&gt;
+        +String name
+    }
+
+    class VoteType {
+        &lt;&lt;enumeration&gt;&gt;
+        UPVOTE
+        DOWNVOTE
+    }
+
+    class ReputationService {
+    }
+
+    class StackOverflowService {
+        -Map~String, User~ users
+        -Map~String, Question~ questions
+        -Map~String, Post~ postsById
+        -ReputationService reputationService
+    }
+
+    Post &lt;|-- Question : permits
+    Post &lt;|-- Answer : permits
+    Question *-- "0..*" Answer : composition
+    Post *-- "0..*" Comment : composition
+    Post *-- "0..*" Vote : composition
+    Question o-- "1..*" Tag : aggregation
+    Post --&gt; User : author
+    Comment --&gt; User : author
+    Vote --&gt; User : voter
+    Vote --&gt; VoteType : direction
+    StackOverflowService o-- "0..*" User : registry
+    StackOverflowService o-- "0..*" Question : search index
+    StackOverflowService o-- "0..*" Post : id index
+    StackOverflowService --&gt; ReputationService : delegates
+    ReputationService ..&gt; User : updates score
+</pre>
+        </div>
+        <span class="dgm-hint">drag to pan · scroll or pinch to zoom · double-click to fit</span>
+        <span class="dgm-zoom" id="dgmZoom">100%</span>
+        <div class="dgm-ctl">
+          <button type="button" data-zoom="out" aria-label="Zoom out">−</button>
+          <button type="button" data-zoom="in" aria-label="Zoom in">+</button>
+          <button type="button" class="wide" data-zoom="fit">FIT</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>
+    Built as a gated exercise: requirements, naming, design document, V1 without patterns, an
+    argument about whether any pattern was needed, then V2. The Java lives in
+    <code>com.stackoverflow</code> with 47 JUnit tests; the long-form write-up is
+    <code>StackOverflow.md</code>. Concurrency is named as five races and deliberately left
+    uncoded. Reputation on this page uses the same table as <code>ReputationService</code>.
+  </p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- the reputation table, same numbers as ReputationService ---------- */
+  var REP = { QUESTION_POSTED: 1, ANSWER_POSTED: 1, QUESTION_UPVOTED: 5, ANSWER_UPVOTED: 10, DOWNVOTED: -2 };
+
+  var QUESTIONS = [
+    { title: "Why is my HashMap unordered?", body: "Iteration order keeps changing between runs.", tags: ["Java", "collections"] },
+    { title: "When should I use a record instead of a class?", body: "Both of them just hold data. What actually decides it?", tags: ["Java", "records"] },
+    { title: "Does a sealed class stop me extending it?", body: "I want the compiler to catch a new subtype, not a reviewer.", tags: ["Java", "sealed-classes"] }
+  ];
+  var ANSWERS = [
+    "HashMap makes no ordering promise at all. Use LinkedHashMap when you need insertion order.",
+    "A record when the value is its fields and it never changes after construction.",
+    "It permits only the types you list, and a switch over it gets checked for exhaustiveness."
+  ];
+  var COMMENTS = [
+    "Which Java version are you on?",
+    "LinkedHashMap fixed it, thanks.",
+    "The subtypes have to be final or sealed too.",
+    "Does this hold for TreeMap as well?"
+  ];
+
+  var users, posts, seq, actor, selected, ledger, qUsed, aUsed, cUsed;
+
+  function reset() {
+    users = [
+      { id: "u1", name: "Alice", rep: 0 },
+      { id: "u2", name: "Bob", rep: 0 },
+      { id: "u3", name: "Carol", rep: 0 }
+    ];
+    posts = [];
+    ledger = [];
+    seq = 0;
+    actor = "u1";
+    qUsed = 0; aUsed = 0; cUsed = 0;
+    ask("u1");
+    answer("u2", posts[0].id);
+    selected = posts[0].id;
+    ledger = [];
+    note("askQuestion(\"u1\", …) → q1", "dim", "postAnswer(\"u2\", \"q1\", …) → a2");
+    render();
+  }
+
+  function user(id) { for (var i = 0; i < users.length; i++) { if (users[i].id === id) { return users[i]; } } return null; }
+  function post(id) { for (var i = 0; i < posts.length; i++) { if (posts[i].id === id) { return posts[i]; } } return null; }
+  function nextId(prefix) { seq += 1; return prefix + seq; }
+
+  /* ---------- the service, in miniature ---------- */
+  function ask(authorId) {
+    var src = QUESTIONS[qUsed % QUESTIONS.length];
+    qUsed += 1;
+    var q = {
+      id: nextId("q"), kind: "q", author: authorId, title: src.title, body: src.body,
+      tags: src.tags.map(function (t) { return t.trim().toLowerCase(); }),
+      votes: {}, comments: []
+    };
+    posts.push(q);
+    gain(authorId, REP.QUESTION_POSTED, "question posted");
+    return q;
+  }
+
+  function answer(authorId, questionId) {
+    var a = {
+      id: nextId("a"), kind: "a", author: authorId, parent: questionId,
+      body: ANSWERS[aUsed % ANSWERS.length], votes: {}, comments: []
+    };
+    aUsed += 1;
+    posts.push(a);
+    gain(authorId, REP.ANSWER_POSTED, "answer posted");
+    return a;
+  }
+
+  function comment(authorId, postId) {
+    var p = post(postId);
+    p.comments.push({ author: authorId, text: COMMENTS[cUsed % COMMENTS.length] });
+    cUsed += 1;
+    gain(authorId, 0, "comment posted");
+  }
+
+  /* Post.castVote — the one-vote rule, in the post itself */
+  function castVote(p, voterId, type) {
+    if (p.author === voterId) { return "OWN_POST"; }
+    if (Object.prototype.hasOwnProperty.call(p.votes, voterId)) { return "ALREADY_VOTED"; }
+    p.votes[voterId] = type;
+    return "ACCEPTED";
+  }
+
+  /* ReputationService.onVoteCast — V2 shape: no runtime type test survives the switch */
+  function onVoteCast(p, type) {
+    if (type === "DOWNVOTE") { gain(p.author, REP.DOWNVOTED, "downvoted"); return REP.DOWNVOTED; }
+    var delta = p.kind === "q" ? REP.QUESTION_UPVOTED : (p.kind === "a" ? REP.ANSWER_UPVOTED : 0);
+    gain(p.author, delta, p.kind === "q" ? "question upvoted" : "answer upvoted");
+    return delta;
+  }
+
+  function gain(userId, delta, why) {
+    user(userId).rep += delta;
+    ledger.unshift({ who: user(userId).name, delta: delta, why: why });
+    if (ledger.length > 40) { ledger.pop(); }
+  }
+
+  function score(p) {
+    var up = 0, down = 0;
+    for (var k in p.votes) {
+      if (!Object.prototype.hasOwnProperty.call(p.votes, k)) { continue; }
+      if (p.votes[k] === "UPVOTE") { up += 1; } else { down += 1; }
+    }
+    return up - down;
+  }
+
+  /* ---------- rendering ---------- */
+  var ARROW_UP = '<svg viewBox="0 0 17 11" aria-hidden="true"><path d="M8.5 1 16 10H1z" fill="currentColor"/></svg>';
+  var ARROW_DOWN = '<svg viewBox="0 0 17 11" aria-hidden="true"><path d="M8.5 10 1 1h15z" fill="currentColor"/></svg>';
+
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  function postHtml(p) {
+    var s = score(p);
+    var mine = p.votes[actor];
+    var cls = "post " + p.kind + (selected === p.id ? " sel" : "");
+    var kindLabel = p.kind === "q" ? "question · " + p.id : (p.kind === "a" ? "answer · " + p.id : "wiki post · " + p.id);
+    var h = '<div class="' + cls + '" data-post="' + p.id + '">';
+
+    h += '<div class="votecol">';
+    h += '<button class="arrow u' + (mine === "UPVOTE" ? " on" : "") + '" data-vote="UPVOTE" data-on="' + p.id + '" aria-label="Upvote ' + p.id + '">' + ARROW_UP + '</button>';
+    h += '<span class="score tnum ' + (s > 0 ? "pos" : (s < 0 ? "neg" : "")) + '">' + s + '</span>';
+    h += '<button class="arrow d' + (mine === "DOWNVOTE" ? " on" : "") + '" data-vote="DOWNVOTE" data-on="' + p.id + '" aria-label="Downvote ' + p.id + '">' + ARROW_DOWN + '</button>';
+    h += '</div>';
+
+    h += '<div style="display:grid; gap:7px; min-width:0">';
+    h += '<span class="kind">' + kindLabel + '</span>';
+    if (p.title) { h += '<span class="ttl">' + esc(p.title) + '</span>'; }
+    h += '<p class="txt">' + esc(p.body) + '</p>';
+    if (p.tags) {
+      h += '<div class="tags">';
+      for (var i = 0; i < p.tags.length; i++) { h += '<span class="tag">' + esc(p.tags[i]) + '</span>'; }
+      h += '</div>';
+    }
+    h += '<div class="by"><b>' + esc(user(p.author).name) + '</b><span class="mono">' + user(p.author).rep + ' rep</span></div>';
+
+    if (p.comments.length) {
+      h += '<div class="cmts">';
+      for (var j = 0; j < p.comments.length; j++) {
+        h += '<div class="cmt">' + esc(p.comments[j].text) + ' — <b>' + esc(user(p.comments[j].author).name) + '</b></div>';
+      }
+      h += '</div>';
+    }
+    h += '</div></div>';
+    return h;
+  }
+
+  function render() {
+    var h = "";
+    for (var i = 0; i < posts.length; i++) { h += postHtml(posts[i]); }
+    document.getElementById("thread").innerHTML = h;
+
+    var wh = "";
+    for (var u = 0; u < users.length; u++) {
+      wh += '<button class="wbtn" data-actor="' + users[u].id + '" aria-pressed="' + (actor === users[u].id) + '">' +
+            '<span class="nm">' + users[u].name + '</span>' +
+            '<span class="rep tnum' + (users[u].rep < 0 ? " neg" : "") + '">' + users[u].rep + ' rep</span></button>';
+    }
+    document.getElementById("who").innerHTML = wh;
+
+    var sel = post(selected);
+    document.getElementById("selTag").textContent = sel
+      ? (sel.kind === "q" ? "question " : (sel.kind === "a" ? "answer " : "wiki post ")) + sel.id + " selected"
+      : "nothing selected";
+    document.getElementById("bAnswer").disabled = !sel || sel.kind !== "q";
+    document.getElementById("bComment").disabled = !sel;
+
+    var lh = "";
+    if (!ledger.length) {
+      lh = '<p class="empty">Nothing yet. Vote on a post, or write something.</p>';
+    } else {
+      for (var l = 0; l < ledger.length; l++) {
+        var d = ledger[l].delta;
+        var dc = d > 0 ? "p" : (d < 0 ? "n" : "z");
+        var ds = d > 0 ? "+" + d : String(d);
+        lh += '<div class="lrow"><span>' + ledger[l].who + '</span><span class="d ' + dc + ' tnum">' + ds + '</span><span class="m">' + ledger[l].why + '</span></div>';
+      }
+    }
+    document.getElementById("ledger").innerHTML = lh;
+  }
+
+  function note(line, cls, second) {
+    var h = '<span class="' + (cls || "") + '">' + esc(line) + '</span>';
+    if (second) { h += '<br><span class="dim">' + esc(second) + '</span>'; }
+    document.getElementById("verdict").innerHTML = h;
+  }
+
+  function snippet(lines) { document.getElementById("snippet").innerHTML = lines; }
+
+  snippet('<span class="c">// the one-vote rule lives in Post</span>\ncastVote(voter, type)\n  <span class="c">// your own post    → false</span>\n  <span class="c">// already voted    → false</span>\n\n<span class="c">// the table lives in one class</span>\nquestion upvote  <span class="g">+5</span>\nanswer upvote    <span class="g">+10</span>\ndownvote         <span class="r">-2</span>\nposting          <span class="g">+1</span>\ncomment           0');
+
+  /* ---------- stage wiring ---------- */
+  document.getElementById("thread").addEventListener("click", function (e) {
+    var arrow = e.target.closest ? e.target.closest("[data-vote]") : null;
+    if (arrow) {
+      e.stopPropagation();
+      var p = post(arrow.getAttribute("data-on"));
+      var type = arrow.getAttribute("data-vote");
+      var who = user(actor);
+      var outcome = castVote(p, actor, type);
+      var call = p.id + '.castVote(' + who.name.toLowerCase() + ', ' + type + ')';
+      if (outcome === "OWN_POST") {
+        note(call + " → false", "no", "nobody votes on their own post · reputation unchanged");
+      } else if (outcome === "ALREADY_VOTED") {
+        note(call + " → false", "no", "one vote per user per post, and a cast vote is final · reputation unchanged");
+      } else {
+        var delta = onVoteCast(p, type);
+        var sign = delta > 0 ? "+" + delta : String(delta);
+        note(call + " → true", "ok",
+          "onVoteCast → " + user(p.author).name + " " + sign + " · " + p.id + ".score() = " + score(p));
+      }
+      render();
+      return;
+    }
+    var card = e.target.closest ? e.target.closest("[data-post]") : null;
+    if (card) { selected = card.getAttribute("data-post"); render(); }
+  });
+
+  document.getElementById("who").addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest("[data-actor]") : null;
+    if (!b) { return; }
+    actor = b.getAttribute("data-actor");
+    render();
+  });
+
+  document.getElementById("bAsk").onclick = function () {
+    var q = ask(actor);
+    selected = q.id;
+    note('askQuestion("' + actor + '", "' + q.title + '", …, ' + JSON.stringify(q.tags) + ') → ' + q.id, "ok",
+      "tags normalised on the way in · " + user(actor).name + " +1 for asking");
+    render();
+  };
+
+  document.getElementById("bAnswer").onclick = function () {
+    var sel = post(selected);
+    if (!sel || sel.kind !== "q") { return; }
+    var a = answer(actor, sel.id);
+    note('postAnswer("' + actor + '", "' + sel.id + '", …) → ' + a.id, "ok",
+      "the answer is held by its question, and indexed by its own id so a vote can find it");
+    selected = a.id;
+    render();
+  };
+
+  document.getElementById("bComment").onclick = function () {
+    var sel = post(selected);
+    if (!sel) { return; }
+    comment(actor, sel.id);
+    note('addComment("' + actor + '", "' + sel.id + '", …) → c' + seq, "dim",
+      "the reputation table gives a comment 0 · no call to ReputationService at all");
+    render();
+  };
+
+  document.getElementById("bFlow").onclick = function () {
+    reset();
+    castVote(post("a2"), "u3", "UPVOTE");
+    onVoteCast(post("a2"), "UPVOTE");
+    comment("u3", "a2");
+    var again = castVote(post("a2"), "u3", "DOWNVOTE");
+    selected = "a2";
+    note("the documented flow, replayed: Alice asks, Bob answers, Carol upvotes and comments, then votes again",
+      "dim",
+      "Carol's second vote → " + (again === "ACCEPTED" ? "true" : "false") +
+      " · Alice 1 · Bob 11 · Carol 0");
+    render();
+  };
+
+  document.getElementById("bReset").onclick = reset;
+
+  /* ---------- bench one: the dispatch ---------- */
+  var V1_CODE = '<span class="c">// V1 — ask the post what it is</span>\n<span class="k">if</span> (type == DOWNVOTE) {\n    author.addReputation(DOWNVOTED);\n} <span class="k">else if</span> (<span class="r">post instanceof Question</span>) {\n    author.addReputation(QUESTION_UPVOTED);\n} <span class="k">else if</span> (<span class="r">post instanceof Answer</span>) {\n    author.addReputation(ANSWER_UPVOTED);\n}\n<span class="c">// a third type matches neither branch</span>';
+  var V2_CODE = '<span class="c">// V2 — the hierarchy is closed</span>\n<span class="k">abstract sealed class</span> Post\n        <span class="g">permits</span> Question, Answer\n\n<span class="k">int</span> delta = <span class="k">switch</span> (post) {\n    <span class="k">case</span> Question q -> QUESTION_UPVOTED;\n    <span class="k">case</span> Answer   a -> ANSWER_UPVOTED;\n};  <span class="g">// no default, on purpose</span>';
+
+  var dispMode = "v1", wikiAdded = false;
+
+  function dispRender() {
+    var v1 = dispMode === "v1";
+    document.getElementById("dispV1").setAttribute("aria-pressed", String(v1));
+    document.getElementById("dispV2").setAttribute("aria-pressed", String(!v1));
+    document.getElementById("dispCode").innerHTML = v1 ? V1_CODE : V2_CODE;
+    document.getElementById("dispNote").innerHTML = v1
+      ? 'Five numbers stay in one class, which is the reason this shape was kept over moving the values onto <code>Question</code> and <code>Answer</code>. The cost is that the chain has no <code>else</code>, and nothing says it should.'
+      : 'The absent <code>default</code> is the whole mechanism. Adding one would silence the exhaustiveness check and hand back the V1 behaviour.';
+
+    var g = "";
+    if (!wikiAdded) {
+      g = '<div class="gaterow"><span class="mk">…</span><span>Press <strong>Add a third post type</strong> to drop in a <code>WikiPost</code> with nothing but a constructor — the lazy way somebody really would write it.</span></div>';
+      document.getElementById("dispGates").innerHTML = g;
+      document.getElementById("dispErrHost").innerHTML = "";
+      return;
+    }
+    if (v1) {
+      g += '<div class="gaterow"><span class="mk ok">✓</span><span><strong>It compiles.</strong> Nothing in the language objects to a third subclass of <code>Post</code>.</span></div>';
+      g += '<div class="gaterow"><span class="mk no">!</span><span>Upvoting one calls <code>onVoteCast</code>, matches neither <code>instanceof</code>, and falls out of the method. The author earns <strong class="mono">+0</strong>, no exception, no log, nothing.</span></div>';
+      document.getElementById("dispGates").innerHTML = g;
+      document.getElementById("dispErrHost").innerHTML =
+        '<div class="code"><span class="c">// upvote a WikiPost under V1</span>\nonVoteCast(wiki, UPVOTE)\nwiki.getAuthor().getReputation()  <span class="r">→ 0</span>\n<span class="c">// expected 5, or 10, or a crash.</span>\n<span class="c">// got silence.</span></div>';
+    } else {
+      g += '<div class="gaterow"><span class="mk no">✕</span><span><strong>Gate one.</strong> It will not compile at all, because <code>Post</code> names who may extend it.</span></div>';
+      g += '<div class="gaterow"><span class="mk no">✕</span><span><strong>Gate two.</strong> Add <code>WikiPost</code> to the <code>permits</code> clause and it still will not compile, because the switch no longer covers every case. You cannot add a post type and forget to decide what its upvote is worth.</span></div>';
+      document.getElementById("dispGates").innerHTML = g;
+      document.getElementById("dispErrHost").innerHTML =
+        '<div class="cerr">WikiPost.java:[3,8] class is not allowed to extend\nsealed class: com.stackoverflow.Post (as it is not\nlisted in its \'permits\' clause)</div>' +
+        '<div class="cerr" style="margin-top:7px">ReputationService.java:[30,21] the switch expression\ndoes not cover all possible input values</div>';
+    }
+  }
+
+  document.getElementById("dispV1").onclick = function () { dispMode = "v1"; dispRender(); };
+  document.getElementById("dispV2").onclick = function () { dispMode = "v2"; dispRender(); };
+  document.getElementById("bWiki").onclick = function () {
+    wikiAdded = !wikiAdded;
+    this.textContent = wikiAdded ? "Take it back out" : "Add a third post type";
+    dispRender();
+  };
+  dispRender();
+
+  /* ---------- bench two: the two reputation bugs ---------- */
+  function dblRender() {
+    var n = parseInt(document.getElementById("dblRange").value, 10);
+    document.getElementById("dblLabel").textContent = n;
+    var rows = "", good = 0, bad = 0;
+    for (var i = 1; i <= n; i++) {
+      good = good + REP.QUESTION_POSTED;
+      bad = bad + (bad + REP.QUESTION_POSTED);
+      rows += '<tr><td>' + i + (i === 1 ? " question" : " questions") + '</td>' +
+              '<td class="fine tnum">' + good + '</td>' +
+              '<td class="hit tnum">' + bad + '</td>' +
+              '<td class="tnum">' + (bad - good) + '</td></tr>';
+    }
+    document.getElementById("dblRows").innerHTML = rows;
+    document.getElementById("dblNote").innerHTML =
+      'After <strong>' + n + '</strong> ' + (n === 1 ? "question" : "questions") + ' the buggy total is <strong class="mono">' +
+      bad + '</strong> where the table says <strong class="mono">' + good + '</strong>. ' +
+      (n === 1
+        ? 'At one post the two agree, which is exactly why this survived a first read.'
+        : 'The gap is <strong class="mono">' + (bad - good) + '</strong> and it doubles with every post.');
+  }
+  document.getElementById("dblRange").oninput = dblRender;
+  dblRender();
+
+  var RET_WITH = '<span class="k">if</span> (type == VoteType.DOWNVOTE) {\n    author.addReputation(DOWNVOTED);\n    <span class="g">return;</span>\n}\n<span class="k">int</span> delta = <span class="k">switch</span> (post) { … };\nauthor.addReputation(delta);';
+  var RET_WITHOUT = '<span class="k">if</span> (type == VoteType.DOWNVOTE) {\n    author.addReputation(DOWNVOTED);\n<span class="r">}   // and then falls straight through</span>\n\n<span class="k">int</span> delta = <span class="k">switch</span> (post) { … };\n<span class="r">author.addReputation(delta);  // again</span>';
+  var retHas = true;
+
+  function retRender() {
+    document.getElementById("retWith").setAttribute("aria-pressed", String(retHas));
+    document.getElementById("retWithout").setAttribute("aria-pressed", String(!retHas));
+    document.getElementById("retCode").innerHTML = retHas ? RET_WITH : RET_WITHOUT;
+    document.getElementById("retNote").innerHTML = retHas
+      ? 'One <code>return</code>, and a downvote is the only thing that happens.'
+      : 'Without it a downvote applies <span class="mono">−2</span> and then carries on into the switch, adding the upvote value on top. The method does both jobs on one vote.';
+
+    var cases = [
+      { what: "a question", expect: REP.DOWNVOTED, got: retHas ? REP.DOWNVOTED : REP.DOWNVOTED + REP.QUESTION_UPVOTED },
+      { what: "an answer", expect: REP.DOWNVOTED, got: retHas ? REP.DOWNVOTED : REP.DOWNVOTED + REP.ANSWER_UPVOTED }
+    ];
+    var rows = "";
+    for (var i = 0; i < cases.length; i++) {
+      var ok = cases[i].got === cases[i].expect;
+      rows += '<tr><td>' + cases[i].what + '</td><td class="tnum">' + cases[i].expect + '</td>' +
+              '<td class="tnum ' + (ok ? "fine" : "hit") + '">' + cases[i].got + '</td></tr>';
+    }
+    document.getElementById("retRows").innerHTML = rows;
+
+    document.getElementById("retFails").innerHTML = retHas
+      ? '<span class="g">Tests run: 47, Failures: 0, Errors: 0</span>\n<span class="c">BUILD SUCCESS</span>'
+      : '<span class="r">aQuestionDownvoteCostsTwo:69</span>\n  expected: &lt;-2&gt; but was: &lt;3&gt;\n<span class="r">anAnswerDownvoteCostsTwo:75</span>\n  expected: &lt;-2&gt; but was: &lt;8&gt;\n<span class="r">reputationIsTheRunningSum…:84</span>\n  expected: &lt;14&gt; but was: &lt;19&gt;';
+  }
+  document.getElementById("retWith").onclick = function () { retHas = true; retRender(); };
+  document.getElementById("retWithout").onclick = function () { retHas = false; retRender(); };
+  retRender();
+
+  document.getElementById("repDouble").onclick = function () {
+    this.setAttribute("aria-pressed", "true");
+    document.getElementById("repReturn").setAttribute("aria-pressed", "false");
+    document.getElementById("paneDouble").hidden = false;
+    document.getElementById("paneReturn").hidden = true;
+  };
+  document.getElementById("repReturn").onclick = function () {
+    this.setAttribute("aria-pressed", "true");
+    document.getElementById("repDouble").setAttribute("aria-pressed", "false");
+    document.getElementById("paneReturn").hidden = false;
+    document.getElementById("paneDouble").hidden = true;
+  };
+
+  /* ---------- bench three: search ---------- */
+  var CORPUS = [
+    { id: "q1", kind: "question", author: "Alice", title: "Why is my HashMap unordered?", body: "Iteration order keeps changing between runs.", tags: ["java", "collections"] },
+    { id: "q3", kind: "question", author: "Alice", title: "Does a sealed class stop me extending it?", body: "I want the compiler to catch a new subtype.", tags: ["java", "sealed-classes"] },
+    { id: "q5", kind: "question", author: "Carol", title: "When should I use a record?", body: "Both hold data, so what decides it?", tags: ["java", "records"] },
+    { id: "a2", kind: "answer", author: "Bob", title: "", body: "HashMap makes no ordering promise. Use LinkedHashMap for insertion order.", tags: [] }
+  ];
+  var sMode = "keyword";
+
+  function sRender() {
+    ["sKeyword", "sTag", "sAuthor"].forEach(function (id) {
+      document.getElementById(id).setAttribute("aria-pressed", String(id === "s" + sMode.charAt(0).toUpperCase() + sMode.slice(1)));
+    });
+    var raw = document.getElementById("sInput").value;
+    var labels = { keyword: "Keyword", tag: "Tag name", author: "Author" };
+    document.getElementById("sLab").textContent = labels[sMode];
+
+    var calls = {
+      keyword: 'searchByKeyword("' + raw + '")',
+      tag: 'searchByTag("' + raw + '")',
+      author: 'searchByAuthor("' + raw + '")'
+    };
+    document.getElementById("sCall").textContent = calls[sMode];
+
+    var needle = raw.trim().toLowerCase();
+    var codes = {
+      keyword: '<span class="c">// every question, title then body</span>\nquestions.values().stream()\n    .filter(q -> q.matchesKeyword(k))\n    .toList();',
+      tag: '<span class="c">// the query normalises the same way</span>\n<span class="g">Tag tag = new Tag(tagName);</span>\nquestions.values().stream()\n    .filter(q -> q.hasTag(tag))\n    .toList();',
+      author: '<span class="c">// compare ids, never User identity</span>\nquestions.values().stream()\n    .filter(q -> q.getAuthor().getId()\n                  .equals(authorId))\n    .toList();'
+    };
+    document.getElementById("sCode").innerHTML = codes[sMode];
+
+    var notes = {
+      keyword: 'Case-insensitive substring over title and body. No stemming, no index, no relevance order — and it is a full scan of the question registry, which is the limitation the write-up records rather than hides.',
+      tag: 'The query string becomes a <code>Tag</code>, so it is trimmed and lowercased by the same constructor that normalised the tags when the question was asked. Typing <code>JAVA</code> matches <code>java</code> because neither side ever holds the original case.',
+      author: 'Reached through the question registry rather than a list of posts on the user, so there is one source of truth. An unknown id throws instead of quietly returning nothing.'
+    };
+    document.getElementById("sNote").innerHTML = notes[sMode];
+
+    var h = "", hits = 0;
+    for (var i = 0; i < CORPUS.length; i++) {
+      var item = CORPUS[i];
+      var match = false, why = "";
+      if (item.kind === "answer") {
+        why = "not in the search index";
+      } else if (needle === "") {
+        why = "blank query is rejected";
+      } else if (sMode === "keyword") {
+        match = (item.title + " " + item.body).toLowerCase().indexOf(needle) !== -1;
+        why = match ? "title or body contains it" : "no match in title or body";
+      } else if (sMode === "tag") {
+        match = item.tags.indexOf(needle) !== -1;
+        why = match ? "hasTag(" + needle + ")" : "tags: " + item.tags.join(", ");
+      } else {
+        match = item.author.toLowerCase() === needle;
+        why = match ? "author id resolves to " + item.author : "author is " + item.author;
+      }
+      if (match) { hits += 1; }
+      h += '<div class="hit' + (match ? "" : " miss") + '">' +
+           '<span>' + esc(item.title || item.body) + '<br><span class="sub">' + item.kind + " · " + item.id + " · " + why + '</span></span>' +
+           '<span class="pill ' + (match ? "good" : "") + '">' + (match ? "returned" : "skipped") + '</span></div>';
+    }
+    h += '<p class="note" style="margin-top:4px">' +
+         '<strong class="mono">' + hits + '</strong> of 3 questions returned. The answer <code>a2</code> contains the word ' +
+         '<em>HashMap</em> and is never returned by any of the three, because <code>questions</code> is the search index and ' +
+         'answers live only in the id index.</p>';
+    document.getElementById("sHits").innerHTML = h;
+  }
+
+  document.getElementById("sKeyword").onclick = function () { sMode = "keyword"; document.getElementById("sInput").value = "HashMap"; sRender(); };
+  document.getElementById("sTag").onclick = function () { sMode = "tag"; document.getElementById("sInput").value = "JAVA"; sRender(); };
+  document.getElementById("sAuthor").onclick = function () { sMode = "author"; document.getElementById("sInput").value = "Alice"; sRender(); };
+  document.getElementById("sInput").oninput = sRender;
+
+  /* ---------- the zoomable diagram ---------- */
+  function makeZoomable(frameId, stageId, outId) {
+    var frame = document.getElementById(frameId), stage = document.getElementById(stageId), out = document.getElementById(outId);
+    if (!frame || !stage) { return null; }
+    var z = 1, tx = 0, ty = 0;
+
+    function apply() {
+      stage.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + z + ")";
+      if (out) { out.textContent = Math.round(z * 100) + "%"; }
+    }
+    function fit() {
+      var svg = stage.querySelector("svg");
+      if (!svg) { return; }
+      var w = svg.getBoundingClientRect().width / z, h = svg.getBoundingClientRect().height / z;
+      if (!w || !h) { return; }
+      z = Math.min((frame.clientWidth - 24) / w, (frame.clientHeight - 24) / h, 1.6);
+      tx = (frame.clientWidth - w * z) / 2;
+      ty = (frame.clientHeight - h * z) / 2;
+      apply();
+    }
+    function zoomAt(factor, cx, cy) {
+      var next = Math.min(Math.max(z * factor, 0.15), 6);
+      var k = next / z;
+      tx = cx - k * (cx - tx);
+      ty = cy - k * (cy - ty);
+      z = next;
+      apply();
+    }
+
+    frame.addEventListener("wheel", function (e) {
+      e.preventDefault();
+      var r = frame.getBoundingClientRect();
+      zoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - r.left, e.clientY - r.top);
+    }, { passive: false });
+
+    var pointers = new Map(), dragging = false, lastX = 0, lastY = 0, pinchFrom = 0, pinchZoom = 1;
+
+    stage.addEventListener("pointerdown", function (e) {
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 1) {
+        dragging = true; lastX = e.clientX; lastY = e.clientY;
+        stage.classList.add("drag");
+        stage.setPointerCapture(e.pointerId);
+      } else if (pointers.size === 2) {
+        dragging = false;
+        var p = Array.from(pointers.values());
+        pinchFrom = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+        pinchZoom = z;
+      }
+    });
+
+    stage.addEventListener("pointermove", function (e) {
+      if (!pointers.has(e.pointerId)) { return; }
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2 && pinchFrom > 0) {
+        var p = Array.from(pointers.values());
+        var now = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+        var r = frame.getBoundingClientRect();
+        zoomAt((pinchZoom * (now / pinchFrom)) / z, (p[0].x + p[1].x) / 2 - r.left, (p[0].y + p[1].y) / 2 - r.top);
+        return;
+      }
+      if (!dragging) { return; }
+      tx += e.clientX - lastX; ty += e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
+      apply();
+    });
+
+    function release(e) {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) { pinchFrom = 0; }
+      if (pointers.size === 0) { dragging = false; stage.classList.remove("drag"); }
+    }
+    stage.addEventListener("pointerup", release);
+    stage.addEventListener("pointercancel", release);
+    frame.addEventListener("dblclick", fit);
+
+    /* mermaid renders asynchronously, so fit once the svg actually lands */
+    var tries = 0;
+    var waiting = setInterval(function () {
+      tries += 1;
+      if (stage.querySelector("svg") || tries > 40) { clearInterval(waiting); fit(); }
+    }, 150);
+
+    apply();
+    return {
+      zoomIn: function () { zoomAt(1.25, frame.clientWidth / 2, frame.clientHeight / 2); },
+      zoomOut: function () { zoomAt(1 / 1.25, frame.clientWidth / 2, frame.clientHeight / 2); },
+      fit: fit
+    };
+  }
+
+  var zoomer = makeZoomable("dgmFrame", "dgmStage", "dgmZoom");
+  if (zoomer) {
+    Array.prototype.forEach.call(document.querySelectorAll("[data-zoom]"), function (b) {
+      b.onclick = function () {
+        if (b.dataset.zoom === "in") { zoomer.zoomIn(); }
+        else if (b.dataset.zoom === "out") { zoomer.zoomOut(); }
+        else { zoomer.fit(); }
+      };
+    });
+  }
+
+  reset();
+  sRender();
+})();
+</script>
